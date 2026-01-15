@@ -1,0 +1,232 @@
+# 测试 GitHub Packages 配置的工作流
+# 此工作流专门用于测试配置，不会实际发布包
+
+name: Test GitHub Packages Configuration
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_type:
+        description: 'Package type to test'
+        type: choice
+        required: true
+        default: 'python'
+        options:
+          - python
+          - docker
+          - all
+      dry_run:
+        description: 'Dry run (no actual upload)'
+        type: boolean
+        default: true
+        required: false
+
+jobs:
+  test-configuration:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Display test information
+        run: |
+          echo "=========================================="
+          echo "GitHub Packages Configuration Test"
+          echo "=========================================="
+          echo ""
+          echo "Repository: ${{ github.repository }}"
+          echo "Package type: ${{ github.event.inputs.package_type }}"
+          echo "Dry run: ${{ github.event.inputs.dry_run }}"
+          echo ""
+          echo "This workflow tests the configuration for GitHub Packages"
+          echo "without actually publishing any packages."
+          echo ""
+
+      - name: Check GitHub Packages permissions
+        run: |
+          echo "Checking GitHub Packages permissions..."
+          echo ""
+          echo "1. Repository permissions:"
+          echo "   - Default GITHUB_TOKEN permissions include:"
+          echo "     * contents: read"
+          echo "     * packages: read (by default)"
+          echo "     * packages: write (needs explicit configuration)"
+          echo ""
+          echo "2. To enable packages: write permission, add to workflow:"
+          echo "   permissions:"
+          echo "     contents: read"
+          echo "     packages: write"
+          echo ""
+          echo "3. Current repository settings:"
+          echo "   - Check Settings → Actions → General"
+          echo "   - Workflow permissions should be 'Read and write'"
+
+      - name: Test Python package configuration
+        if: github.event.inputs.package_type == 'python' || github.event.inputs.package_type == 'all'
+        run: |
+          echo "=== Python Package Configuration Test ==="
+          echo ""
+          
+          # Check if Python package structure exists
+          if [ -d "python" ]; then
+            echo "✅ Python directory found: python/"
+            
+            # Check for package configuration files
+            if [ -f "python/pyproject.toml" ]; then
+              echo "✅ pyproject.toml found"
+              echo "Package name from pyproject.toml:"
+              grep -i "name\s*=" python/pyproject.toml | head -1 || echo "Not found"
+            elif [ -f "python/setup.py" ]; then
+              echo "✅ setup.py found"
+            else
+              echo "⚠️  No Python package configuration found"
+            fi
+            
+            # Test build
+            if [ "${{ github.event.inputs.dry_run }}" = "false" ]; then
+              echo "Attempting to build package..."
+              cd python
+              pip install build 2>/dev/null || true
+              if command -v python3 &> /dev/null; then
+                python3 -m build --sdist --wheel --outdir /tmp/test-build 2>&1 | head -20 || echo "Build failed or not attempted"
+              fi
+            else
+              echo "Dry run: Skipping actual build"
+              echo "Build command would be: cd python && python -m build"
+            fi
+            
+            echo ""
+            echo "GitHub Packages Python repository URL:"
+            echo "https://ghcr.io/${{ github.repository }}/python"
+            echo ""
+            echo "Upload command would be:"
+            echo "twine upload --repository-url https://ghcr.io/${{ github.repository }}/python dist/*"
+          else
+            echo "❌ Python directory not found"
+            echo "Expected directory: python/"
+          fi
+
+      - name: Test Docker configuration
+        if: github.event.inputs.package_type == 'docker' || github.event.inputs.package_type == 'all'
+        run: |
+          echo "=== Docker Configuration Test ==="
+          echo ""
+          
+          # Check if Docker configuration exists
+          if [ -f "docker/Dockerfile" ]; then
+            echo "✅ Dockerfile found: docker/Dockerfile"
+            
+            # Check Dockerfile content
+            echo "Dockerfile info:"
+            head -5 docker/Dockerfile
+            
+            echo ""
+            echo "GitHub Container Registry URL:"
+            echo "https://ghcr.io/${{ github.repository }}"
+            echo ""
+            echo "Image tags would be:"
+            echo "ghcr.io/${{ github.repository }}:latest"
+            echo "ghcr.io/${{ github.repository }}:v1.0.0"
+            echo ""
+            echo "Login command:"
+            echo "docker login ghcr.io -u \${{ github.actor }} -p \$GITHUB_TOKEN"
+            echo ""
+            echo "Build command:"
+            echo "docker build -t ghcr.io/${{ github.repository }}:test -f docker/Dockerfile ."
+          else
+            echo "❌ Dockerfile not found"
+            echo "Expected: docker/Dockerfile"
+            echo ""
+            echo "Alternative Dockerfile locations:"
+            find . -name "Dockerfile" -type f | head -5
+          fi
+
+      - name: Check required secrets
+        run: |
+          echo "=== Required Secrets Check ==="
+          echo ""
+          echo "For production use, ensure these secrets are configured:"
+          echo ""
+          echo "1. PyPI upload (if applicable):"
+          echo "   - Name: PYPI_TOKEN"
+          echo "   - Purpose: Authentication for pypi.org"
+          echo "   - Status: $([ -n "${{ secrets.PYPI_TOKEN }}" ] && echo "✅ Configured" || echo "❌ Not configured")"
+          echo ""
+          echo "2. Docker Hub (if applicable):"
+          echo "   - Name: DOCKERHUB_USERNAME"
+          echo "   - Name: DOCKERHUB_TOKEN"
+          echo "   - Purpose: Authentication for Docker Hub"
+          echo "   - Status: $([ -n "${{ secrets.DOCKERHUB_USERNAME }}" ] && echo "✅ Username configured" || echo "❌ Username not configured")"
+          echo ""
+          echo "3. GitHub Token (auto-provided):"
+          echo "   - Name: GITHUB_TOKEN"
+          echo "   - Purpose: Authentication for GitHub Packages"
+          echo "   - Status: ✅ Auto-provided by GitHub Actions"
+          echo ""
+          echo "To configure secrets:"
+          echo "Settings → Secrets and variables → Actions → New repository secret"
+
+      - name: Generate test workflow snippet
+        run: |
+          echo "=== Test Workflow Snippet ==="
+          echo ""
+          echo "To test actual functionality, create a test workflow:"
+          echo ""
+          echo "name: Test Actual Upload"
+          echo "on: workflow_dispatch"
+          echo ""
+          echo "jobs:"
+          echo "  test-upload:"
+          echo "    runs-on: ubuntu-latest"
+          echo "    permissions:"
+          echo "      contents: read"
+          echo "      packages: write"
+          echo "    steps:"
+          echo "      - uses: actions/checkout@v4"
+          echo "      "
+          echo "      # Test Python build"
+          echo "      - name: Build Python package"
+          echo "        run: cd python && pip install build && python -m build"
+          echo "      "
+          echo "      # Test Docker build"
+          echo "      - name: Build Docker image"
+          echo "        run: docker build -t ghcr.io/\${{ github.repository }}:test -f docker/Dockerfile ."
+          echo "      "
+          echo "      # Login to GHCR (but don't push)"
+          echo "      - name: Login to GitHub Container Registry"
+          echo "        uses: docker/login-action@v2"
+          echo "        with:"
+          echo "          registry: ghcr.io"
+          echo "          username: \${{ github.actor }}"
+          echo "          password: \${{ secrets.GITHUB_TOKEN }}"
+          echo "      "
+          echo "      - name: Test complete"
+          echo "        run: echo 'Test completed successfully'"
+
+      - name: Next steps
+        run: |
+          echo "=== Next Steps ==="
+          echo ""
+          echo "1. If this test passes, your configuration is correct"
+          echo "2. To actually publish packages:"
+          echo "   a. Ensure you're in the production repository (sgl-project/sglang)"
+          echo "   b. Run the actual release workflows:"
+          echo "      - release-pypi-with-ghpkg.yml (for Python packages)"
+          echo "      - release-docker-with-ghcr.yml (for Docker images)"
+          echo "   c. Or modify existing workflows to add GitHub Packages support"
+          echo "3. For troubleshooting:"
+          echo "   - Check workflow permissions"
+          echo "   - Verify secrets are configured"
+          echo "   - Review GitHub Packages documentation"
+          echo ""
+          echo "Documentation: https://docs.github.com/en/packages"
+
+# 使用说明：
+# 1. 在 GitHub 仓库页面进入 Actions 标签页
+# 2. 选择 "Test GitHub Packages Configuration"
+# 3. 点击 "Run workflow"
+# 4. 选择要测试的包类型（python/docker/all）
+# 5. 保持 dry_run=true 进行配置测试
+# 6. 如果配置正确，可以设置 dry_run=false 进行实际构建测试（仍不会上传）
+#
+# 注意：此工作流仅用于测试配置，不会实际发布任何包

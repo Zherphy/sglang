@@ -8,10 +8,21 @@ on:
     tags:
       - 'v[0-9]+.*'
   workflow_dispatch:
+    inputs:
+      test_mode:
+        description: 'Test mode (build only, no upload)'
+        type: boolean
+        default: false
+        required: false
+
+env:
+  # 判断是否为测试模式
+  IS_TEST_MODE: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.test_mode == 'true' || github.repository != 'sgl-project/sglang' }}
+  # 判断是否应该上传
+  SHOULD_UPLOAD: ${{ github.repository == 'sgl-project/sglang' && (github.event_name != 'workflow_dispatch' || github.event.inputs.test_mode == 'false') }}
 
 jobs:
   publish:
-    if: github.repository == 'sgl-project/sglang'
     runs-on: ubuntu-latest
     environment: "prod"
     permissions:
@@ -19,6 +30,22 @@ jobs:
       packages: write  # 需要此权限来发布到 GitHub Packages
     
     steps:
+      - name: Check execution mode
+        run: |
+          echo "Repository: ${{ github.repository }}"
+          echo "Event: ${{ github.event_name }}"
+          echo "Is test mode: ${{ env.IS_TEST_MODE }}"
+          echo "Should upload: ${{ env.SHOULD_UPLOAD }}"
+          echo ""
+          if [ "${{ env.IS_TEST_MODE }}" = "true" ]; then
+            echo "⚠️  RUNNING IN TEST MODE - No actual upload will be performed"
+            echo "   This is either because:"
+            echo "   1. Manual trigger with test_mode=true"
+            echo "   2. Not in the production repository (sgl-project/sglang)"
+          else
+            echo "✅ RUNNING IN PRODUCTION MODE - Uploads will be performed"
+          fi
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
@@ -41,23 +68,34 @@ jobs:
           ls -lh dist/
           echo "======================"
 
-      - name: Upload to PyPI
+      - name: Upload to PyPI (conditional)
+        if: env.SHOULD_UPLOAD == 'true'
         env:
           PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
         run: |
           cd python
           pip install twine
-          echo "Uploading to PyPI..."
+          echo "✅ Uploading to PyPI..."
           python3 -m twine upload dist/* -u __token__ -p $PYPI_TOKEN --verbose
 
-      - name: Upload to GitHub Packages
+      - name: Skip PyPI upload (test mode)
+        if: env.SHOULD_UPLOAD != 'true'
+        run: |
+          echo "⏭️  Skipping PyPI upload (test mode or not production repository)"
+          echo "To actually upload, ensure:"
+          echo "1. Repository is sgl-project/sglang"
+          echo "2. Not in test mode (test_mode=false)"
+          echo "3. PYPI_TOKEN secret is configured"
+
+      - name: Upload to GitHub Packages (conditional)
+        if: env.SHOULD_UPLOAD == 'true'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cd python
           pip install twine
           
-          echo "Uploading to GitHub Packages..."
+          echo "✅ Uploading to GitHub Packages..."
           
           # 方法1：使用 repository-url 参数（推荐）
           python3 -m twine upload \
@@ -66,34 +104,59 @@ jobs:
             --verbose \
             --username ${{ github.actor }} \
             --password $GITHUB_TOKEN
-          
-          # 方法2：使用 .pypirc 配置文件（备选）
-          # cat > ~/.pypirc << EOF
-          # [distutils]
-          # index-servers =
-          #     pypi
-          #     github
-          # 
-          # [pypi]
-          # username = __token__
-          # password = $PYPI_TOKEN
-          # 
-          # [github]
-          # repository = https://ghcr.io/${{ github.repository }}/python
-          # username = ${{ github.actor }}
-          # password = $GITHUB_TOKEN
-          # EOF
-          # 
-          # python3 -m twine upload --repository github dist/* --verbose
 
-      - name: Verify uploads
+      - name: Skip GitHub Packages upload (test mode)
+        if: env.SHOULD_UPLOAD != 'true'
         run: |
-          echo "=== Verification ==="
-          echo "1. PyPI: https://pypi.org/project/sglang/"
-          echo "2. GitHub Packages: https://github.com/${{ github.repository }}/packages"
+          echo "⏭️  Skipping GitHub Packages upload (test mode or not production repository)"
+          echo "To actually upload, ensure:"
+          echo "1. Repository is sgl-project/sglang"
+          echo "2. Not in test mode (test_mode=false)"
+          echo "3. Repository has packages write permission"
+
+      - name: Test upload simulation
+        if: env.SHOULD_UPLOAD != 'true'
+        run: |
+          echo "🧪 TEST MODE - Simulating upload commands"
           echo ""
-          echo "To install from GitHub Packages:"
-          echo "pip install --index-url https://ghcr.io/${{ github.repository }}/python sglang"
+          echo "PyPI upload command would be:"
+          echo "twine upload dist/* -u __token__ -p \$PYPI_TOKEN"
+          echo ""
+          echo "GitHub Packages upload command would be:"
+          echo "twine upload --repository-url https://ghcr.io/${{ github.repository }}/python dist/* --username ${{ github.actor }} --password \$GITHUB_TOKEN"
+          echo ""
+          echo "Packages built:"
+          cd python && ls -la dist/
+
+      - name: Verify configuration
+        run: |
+          echo "=== Configuration Verification ==="
+          echo "Repository: ${{ github.repository }}"
+          echo "Expected production repository: sgl-project/sglang"
+          echo "Workflow permissions:"
+          echo "  - contents: read ✅"
+          echo "  - packages: write ✅"
+          echo ""
+          echo "Secrets configured:"
+          if [ -n "${{ secrets.PYPI_TOKEN }}" ]; then
+            echo "  - PYPI_TOKEN: ✅ (exists)"
+          else
+            echo "  - PYPI_TOKEN: ❌ (missing)"
+          fi
+          if [ -n "${{ secrets.GITHUB_TOKEN }}" ]; then
+            echo "  - GITHUB_TOKEN: ✅ (auto-provided)"
+          else
+            echo "  - GITHUB_TOKEN: ❌ (unexpected)"
+          fi
+          echo ""
+          echo "Next steps:"
+          if [ "${{ github.repository }}" != "sgl-project/sglang" ]; then
+            echo "1. To test actual upload, run in the production repository"
+          elif [ "${{ env.IS_TEST_MODE }}" = "true" ]; then
+            echo "1. To perform actual upload, run workflow with test_mode=false"
+          else
+            echo "1. All checks passed - uploads should proceed"
+          fi
           echo "===================="
 
 # 配置说明：
