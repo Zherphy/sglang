@@ -1,0 +1,125 @@
+# 发布 Python 包到 PyPI 和 GitHub Packages
+# 此文件基于原有的 release-pypi.yml 修改，添加了 GitHub Packages 支持
+
+name: Release Python Package to PyPI and GitHub Packages
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.*'
+  workflow_dispatch:
+
+jobs:
+  publish:
+    if: github.repository == 'sgl-project/sglang'
+    runs-on: ubuntu-latest
+    environment: "prod"
+    permissions:
+      contents: read
+      packages: write  # 需要此权限来发布到 GitHub Packages
+    
+    steps:
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Required for setuptools-scm to determine version from tags
+
+      - name: Build Python package
+        run: |
+          cd python
+          cp ../README.md ../LICENSE .
+          pip install build wheel setuptools setuptools-scm
+          python3 -m build
+          
+          # 列出构建的包
+          echo "=== Built packages ==="
+          ls -lh dist/
+          echo "======================"
+
+      - name: Upload to PyPI
+        env:
+          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          cd python
+          pip install twine
+          echo "Uploading to PyPI..."
+          python3 -m twine upload dist/* -u __token__ -p $PYPI_TOKEN --verbose
+
+      - name: Upload to GitHub Packages
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd python
+          pip install twine
+          
+          echo "Uploading to GitHub Packages..."
+          
+          # 方法1：使用 repository-url 参数（推荐）
+          python3 -m twine upload \
+            --repository-url https://ghcr.io/${{ github.repository }}/python \
+            dist/* \
+            --verbose \
+            --username ${{ github.actor }} \
+            --password $GITHUB_TOKEN
+          
+          # 方法2：使用 .pypirc 配置文件（备选）
+          # cat > ~/.pypirc << EOF
+          # [distutils]
+          # index-servers =
+          #     pypi
+          #     github
+          # 
+          # [pypi]
+          # username = __token__
+          # password = $PYPI_TOKEN
+          # 
+          # [github]
+          # repository = https://ghcr.io/${{ github.repository }}/python
+          # username = ${{ github.actor }}
+          # password = $GITHUB_TOKEN
+          # EOF
+          # 
+          # python3 -m twine upload --repository github dist/* --verbose
+
+      - name: Verify uploads
+        run: |
+          echo "=== Verification ==="
+          echo "1. PyPI: https://pypi.org/project/sglang/"
+          echo "2. GitHub Packages: https://github.com/${{ github.repository }}/packages"
+          echo ""
+          echo "To install from GitHub Packages:"
+          echo "pip install --index-url https://ghcr.io/${{ github.repository }}/python sglang"
+          echo "===================="
+
+# 配置说明：
+# 1. 此工作流在原有 release-pypi.yml 基础上添加了 GitHub Packages 支持
+# 2. 需要确保仓库设置中启用了 GitHub Packages 功能
+# 3. 需要添加 permissions 配置以允许写入 packages
+# 4. 使用 GITHUB_TOKEN 自动认证，无需额外配置
+# 5. 包将同时发布到 PyPI 和 GitHub Packages
+
+# 使用前准备：
+# 1. 确保已配置 PyPI_TOKEN secret
+# 2. GITHUB_TOKEN 会自动提供，无需配置
+# 3. 测试时可以使用 workflow_dispatch 手动触发
+
+# 测试安装：
+# 从 GitHub Packages 安装：
+# pip install --index-url https://ghcr.io/sgl-project/sglang/python sglang
+# 
+# 或配置 pip 使用多个索引：
+# cat > ~/.pip/pip.conf << EOF
+# [global]
+# extra-index-url = https://ghcr.io/sgl-project/sglang/python
+# EOF
+
+# 注意事项：
+# 1. GitHub Packages 的 Python 仓库使用 ghcr.io 域名
+# 2. 包名称会自动从 pyproject.toml 或 setup.py 中读取
+# 3. 版本号从 git 标签自动提取
+# 4. 如果发布失败，检查权限和网络连接
