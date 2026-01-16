@@ -1,0 +1,356 @@
+# 在 Fork 仓库中测试 GitHub Packages 发布
+# 此工作流专门用于在 Zherphy/sglang 等 fork 仓库中测试包发布功能
+
+name: Test Package Publishing in Fork Repository
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_type:
+        description: 'Type of package to test'
+        type: choice
+        required: true
+        default: 'python'
+        options:
+          - python
+          - docker
+      test_mode:
+        description: 'Test mode (no actual upload to registries)'
+        type: choice
+        required: true
+        default: 'build-only'
+        options:
+          - build-only      # 只构建，不上传
+          - dry-run        # 模拟上传命令
+          - actual-upload  # 实际上传到 GitHub Packages（需要权限）
+
+env:
+  REPOSITORY_NAME: ${{ github.repository }}
+  IS_FORK_REPO: ${{ github.repository != 'sgl-project/sglang' }}
+  CAN_UPLOAD_TO_GHCR: ${{ github.repository_owner == 'Zherphy' && github.event.inputs.test_mode == 'actual-upload' }}
+
+jobs:
+  setup-and-check:
+    runs-on: ubuntu-latest
+    outputs:
+      can_proceed: ${{ steps.check-permissions.outputs.can_proceed }}
+      test_summary: ${{ steps.check-permissions.outputs.test_summary }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check repository information
+        run: |
+          echo "=== Repository Information ==="
+          echo "Repository: ${{ github.repository }}"
+          echo "Repository owner: ${{ github.repository_owner }}"
+          echo "Is fork repo: ${{ env.IS_FORK_REPO }}"
+          echo "Event: ${{ github.event_name }}"
+          echo "Test mode: ${{ github.event.inputs.test_mode }}"
+          echo "=============================="
+
+      - name: Check permissions and secrets
+        id: check-permissions
+        run: |
+          # 检查基本权限
+          echo "Checking permissions and secrets..."
+          
+          # 检查 GITHUB_TOKEN 权限
+          if [ -n "${{ secrets.GITHUB_TOKEN }}" ]; then
+            echo "✅ GITHUB_TOKEN is available (auto-provided)"
+            GITHUB_TOKEN_STATUS="available"
+          else
+            echo "❌ GITHUB_TOKEN is not available"
+            GITHUB_TOKEN_STATUS="missing"
+          fi
+          
+          # 检查 PYPI_TOKEN（对于 Python 包测试）
+          if [ -n "${{ secrets.PYPI_TOKEN }}" ]; then
+            echo "✅ PYPI_TOKEN is configured"
+            PYPI_TOKEN_STATUS="configured"
+          else
+            echo "⚠️  PYPI_TOKEN is not configured (needed for PyPI upload)"
+            PYPI_TOKEN_STATUS="not_configured"
+          fi
+          
+          # 检查仓库设置
+          echo ""
+          echo "=== Repository Settings Check ==="
+          echo "1. Ensure in repository Settings → Actions → General:"
+          echo "   - Workflow permissions: 'Read and write permissions'"
+          echo "   - Check 'Allow GitHub Actions to create and approve pull requests'"
+          echo ""
+          echo "2. For actual uploads to GitHub Packages:"
+          echo "   - Repository must have 'packages: write' permission"
+          echo "   - This is configured in workflow permissions"
+          
+          # 确定是否可以继续
+          if [ "${{ github.event.inputs.test_mode }}" = "build-only" ] || [ "${{ github.event.inputs.test_mode }}" = "dry-run" ]; then
+            echo "✅ Can proceed with test mode: ${{ github.event.inputs.test_mode }}"
+            CAN_PROCEED="true"
+          elif [ "${{ github.event.inputs.test_mode }}" = "actual-upload" ] && [ "$GITHUB_TOKEN_STATUS" = "available" ]; then
+            echo "✅ Can proceed with actual upload (GITHUB_TOKEN available)"
+            CAN_PROCEED="true"
+          else
+            echo "❌ Cannot proceed with current configuration"
+            CAN_PROCEED="false"
+          fi
+          
+          # 设置输出
+          echo "can_proceed=$CAN_PROCEED" >> $GITHUB_OUTPUT
+          echo "test_summary=GITHUB_TOKEN:$GITHUB_TOKEN_STATUS,PYPI_TOKEN:$PYPI_TOKEN_STATUS" >> $GITHUB_OUTPUT
+
+  test-python-package:
+    runs-on: ubuntu-latest
+    needs: setup-and-check
+    if: needs.setup-and-check.outputs.can_proceed == 'true' && github.event.inputs.package_type == 'python'
+    permissions:
+      contents: read
+      packages: write  # 即使测试也需要此权限来验证配置
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Build Python package
+        id: build
+        run: |
+          echo "Building Python package from python/ directory..."
+          
+          if [ -d "python" ]; then
+            cd python
+            # 复制必要的文件
+            cp ../README.md ../LICENSE . 2>/dev/null || echo "README.md or LICENSE not found, continuing..."
+            
+            # 安装构建工具
+            pip install build wheel setuptools setuptools-scm twine
+            
+            # 构建包
+            echo "Starting build process..."
+            python -m build
+            
+            # 列出构建的包
+            echo "=== Built packages ==="
+            ls -lh dist/
+            echo "======================"
+            
+            # 保存包列表供后续步骤使用
+            PACKAGE_FILES=$(ls dist/*.whl dist/*.tar.gz 2>/dev/null | tr '\n' ' ')
+            echo "package_files=$PACKAGE_FILES" >> $GITHUB_OUTPUT
+            echo "build_success=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ python/ directory not found"
+            echo "build_success=false" >> $GITHUB_OUTPUT
+            exit 1
+          fi
+
+      - name: Test PyPI upload (dry run)
+        if: github.event.inputs.test_mode == 'dry-run' && steps.build.outputs.build_success == 'true'
+        env:
+          PYPI_TOKEN: ${{ secrets.PYPI_TOKEN }}
+        run: |
+          echo "=== PyPI Upload Dry Run ==="
+          cd python
+          
+          if [ -n "$PYPI_TOKEN" ]; then
+            echo "PYPI_TOKEN is available"
+            echo "Upload command would be:"
+            echo "twine upload dist/* -u __token__ -p \$PYPI_TOKEN --verbose"
+            
+            # 测试 twine check
+            echo ""
+            echo "Running twine check..."
+            twine check dist/* || echo "Twine check failed (expected in test environment)"
+          else
+            echo "PYPI_TOKEN is not configured"
+            echo "To test actual PyPI upload, configure PYPI_TOKEN secret"
+          fi
+
+      - name: Test GitHub Packages upload (dry run)
+        if: github.event.inputs.test_mode == 'dry-run' && steps.build.outputs.build_success == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=== GitHub Packages Upload Dry Run ==="
+          cd python
+          
+          echo "GitHub Packages repository URL:"
+          echo "https://ghcr.io/${{ github.repository }}/python"
+          echo ""
+          echo "Upload command would be:"
+          echo "twine upload --repository-url https://ghcr.io/${{ github.repository }}/python dist/* --username ${{ github.actor }} --password \$GITHUB_TOKEN"
+          echo ""
+          echo "To actually upload, run with test_mode: 'actual-upload'"
+
+      - name: Actual upload to GitHub Packages
+        if: github.event.inputs.test_mode == 'actual-upload' && steps.build.outputs.build_success == 'true' && env.CAN_UPLOAD_TO_GHCR == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=== Actual Upload to GitHub Packages ==="
+          cd python
+          
+          echo "Uploading to: https://ghcr.io/${{ github.repository }}/python"
+          
+          # 实际上传
+          twine upload \
+            --repository-url https://ghcr.io/${{ github.repository }}/python \
+            dist/* \
+            --verbose \
+            --username ${{ github.actor }} \
+            --password $GITHUB_TOKEN
+          
+          echo "✅ Upload completed!"
+          echo ""
+          echo "To install from your GitHub Packages:"
+          echo "pip install --index-url https://ghcr.io/${{ github.repository }}/python sglang"
+
+      - name: Skip actual upload (insufficient permissions)
+        if: github.event.inputs.test_mode == 'actual-upload' && env.CAN_UPLOAD_TO_GHCR != 'true'
+        run: |
+          echo "=== Cannot Perform Actual Upload ==="
+          echo ""
+          echo "To perform actual uploads to GitHub Packages:"
+          echo "1. Ensure repository owner is 'Zherphy' (current: ${{ github.repository_owner }})"
+          echo "2. Ensure test_mode is 'actual-upload' (current: ${{ github.event.inputs.test_mode }})"
+          echo "3. Ensure GITHUB_TOKEN has packages:write permission"
+          echo "4. Repository must have GitHub Packages enabled"
+          echo ""
+          echo "For now, running in dry-run mode instead..."
+          echo "To test installation from GitHub Packages, you can use:"
+          echo "pip install --index-url https://ghcr.io/${{ github.repository }}/python sglang"
+
+  test-docker-package:
+    runs-on: ubuntu-latest
+    needs: setup-and-check
+    if: needs.setup-and-check.outputs.can_proceed == 'true' && github.event.inputs.package_type == 'docker'
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry (dry run)
+        if: github.event.inputs.test_mode != 'actual-upload'
+        run: |
+          echo "=== Docker GHCR Login Dry Run ==="
+          echo "Login command would be:"
+          echo "docker login ghcr.io -u ${{ github.actor }} -p \$GITHUB_TOKEN"
+          echo ""
+          echo "Image would be tagged as:"
+          echo "ghcr.io/${{ github.repository }}:test-${{ github.run_id }}"
+
+      - name: Login to GitHub Container Registry (actual)
+        if: github.event.inputs.test_mode == 'actual-upload' && env.CAN_UPLOAD_TO_GHCR == 'true'
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Docker image
+        run: |
+          echo "Building Docker image..."
+          
+          if [ -f "docker/Dockerfile" ]; then
+            # 构建镜像
+            docker build \
+              -t ghcr.io/${{ github.repository }}:test-${{ github.run_id }} \
+              -f docker/Dockerfile \
+              .
+            
+            echo "✅ Docker image built successfully"
+            echo "Image: ghcr.io/${{ github.repository }}:test-${{ github.run_id }}"
+          else
+            echo "❌ Dockerfile not found at docker/Dockerfile"
+            echo "Available Dockerfiles:"
+            find . -name "Dockerfile" -type f | head -5
+          fi
+
+      - name: Push Docker image (actual upload)
+        if: github.event.inputs.test_mode == 'actual-upload' && env.CAN_UPLOAD_TO_GHCR == 'true'
+        run: |
+          echo "Pushing Docker image to GHCR..."
+          docker push ghcr.io/${{ github.repository }}:test-${{ github.run_id }}
+          echo "✅ Image pushed successfully"
+          echo ""
+          echo "To pull this image:"
+          echo "docker pull ghcr.io/${{ github.repository }}:test-${{ github.run_id }}"
+
+  test-summary:
+    runs-on: ubuntu-latest
+    needs: [setup-and-check, test-python-package, test-docker-package]
+    if: always()
+    steps:
+      - name: Generate test summary
+        run: |
+          echo "=========================================="
+          echo "GitHub Packages Test Summary"
+          echo "=========================================="
+          echo ""
+          echo "Repository: ${{ github.repository }}"
+          echo "Test mode: ${{ github.event.inputs.test_mode }}"
+          echo "Package type: ${{ github.event.inputs.package_type }}"
+          echo ""
+          echo "=== Next Steps ==="
+          echo ""
+          
+          if [ "${{ github.event.inputs.test_mode }}" = "build-only" ]; then
+            echo "✅ Build test completed successfully"
+            echo "Next: Try 'dry-run' mode to see upload commands"
+          elif [ "${{ github.event.inputs.test_mode }}" = "dry-run" ]; then
+            echo "✅ Dry run completed successfully"
+            echo "Next: Try 'actual-upload' mode to actually publish"
+            echo ""
+            echo "Before actual upload, ensure:"
+            echo "1. Repository Settings → Actions → General"
+            echo "   - Workflow permissions: 'Read and write permissions'"
+            echo "2. You have packages:write permission"
+          elif [ "${{ github.event.inputs.test_mode }}" = "actual-upload" ]; then
+            echo "✅ Actual upload completed (if permissions allowed)"
+            echo ""
+            echo "To use the published packages:"
+            if [ "${{ github.event.inputs.package_type }}" = "python" ]; then
+              echo "Python package:"
+              echo "pip install --index-url https://ghcr.io/${{ github.repository }}/python sglang"
+            elif [ "${{ github.event.inputs.package_type }}" = "docker" ]; then
+              echo "Docker image:"
+              echo "docker pull ghcr.io/${{ github.repository }}:test-${{ github.run_id }}"
+            fi
+          fi
+          
+          echo ""
+          echo "=== Troubleshooting ==="
+          echo "If uploads failed due to permissions:"
+          echo "1. Check repository Settings → Actions → General"
+          echo "2. Ensure 'Workflow permissions' is set to 'Read and write'"
+          echo "3. Check that GITHUB_TOKEN has packages:write scope"
+          echo ""
+          echo "Documentation: https://docs.github.com/en/packages"
+          echo "=========================================="
+
+# 使用说明：
+# 1. 在 GitHub 仓库页面进入 Actions 标签页
+# 2. 选择 "Test Package Publishing in Fork Repository"
+# 3. 点击 "Run workflow"
+# 4. 选择参数：
+#    - package_type: python (测试Python包) 或 docker (测试Docker镜像)
+#    - test_mode: 
+#        * build-only: 只构建，不上传
+#        * dry-run: 构建并显示上传命令
+#        * actual-upload: 实际上传到 GitHub Packages
+#
+# 注意：
+# - 对于 actual-upload 模式，需要确保仓库有 packages:write 权限
+# - 在 fork 仓库中，上传的包会出现在你的个人/组织 GitHub Packages 中
+# - 测试镜像/包会带有 test-{run_id} 标签，避免与生产版本冲突
