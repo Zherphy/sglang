@@ -1,0 +1,244 @@
+# 测试不同包名以避免冲突的工作流
+# 用于诊断 GitHub Packages 404 错误是否由包名冲突引起
+
+name: Test Package Name Conflicts
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_suffix:
+        description: 'Test suffix to append to package name'
+        type: string
+        required: true
+        default: 'zy_test'
+      skip_upload:
+        description: 'Skip actual upload (dry run only)'
+        type: boolean
+        default: false
+        required: false
+
+jobs:
+  test-package-names:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Show test configuration
+        run: |
+          echo "=== Package Name Conflict Test ==="
+          echo ""
+          echo "Original package name: sglang (from pyproject.toml)"
+          echo "Test suffix: ${{ github.event.inputs.test_suffix }}"
+          echo "Test package name: sglang_${{ github.event.inputs.test_suffix }}"
+          echo ""
+          echo "Purpose: Test if GitHub Packages 404 error is caused by:"
+          echo "1. Package name 'sglang' already taken by someone else"
+          echo "2. General GitHub Packages configuration issue"
+          echo "3. Other problems"
+          echo ""
+          echo "GitHub Packages upload URL:"
+          echo "https://upload.pkg.github.com/${{ github.repository_owner }}/"
+          echo ""
+
+      - name: Build original package
+        id: build-original
+        run: |
+          cd python
+          cp ../README.md ../LICENSE .
+          pip install build
+          
+          echo "=== Building original package ==="
+          python -m build
+          
+          echo "Original package built:"
+          ls -lh dist/
+          
+          # 保存原始包文件列表
+          ORIGINAL_FILES=$(ls dist/*.whl dist/*.tar.gz 2>/dev/null | tr '\n' ' ')
+          echo "original_files=$ORIGINAL_FILES" >> $GITHUB_OUTPUT
+
+      - name: Modify package name and rebuild
+        run: |
+          cd python
+          
+          # 备份原始 pyproject.toml
+          cp pyproject.toml pyproject.toml.backup
+          
+          TEST_PACKAGE_NAME="sglang_${{ github.event.inputs.test_suffix }}"
+          
+          echo "=== Modifying package name ==="
+          echo "Changing package name from 'sglang' to '$TEST_PACKAGE_NAME'"
+          
+          # 使用 sed 修改包名
+          sed -i "s/name = \"sglang\"/name = \"$TEST_PACKAGE_NAME\"/" pyproject.toml
+          
+          # 验证修改
+          echo "Modified pyproject.toml content:"
+          grep -A2 -B2 "name =" pyproject.toml
+          
+          # 清理旧的构建文件
+          rm -rf dist/ build/ *.egg-info/ 2>/dev/null || true
+          
+          # 重新构建包
+          echo ""
+          echo "=== Building test package ==="
+          python -m build
+          
+          echo "Test package built:"
+          ls -lh dist/
+          
+          # 保存测试包文件列表
+          TEST_FILES=$(ls dist/*.whl dist/*.tar.gz 2>/dev/null | tr '\n' ' ')
+          echo "test_files=$TEST_FILES" >> $GITHUB_OUTPUT
+          echo "test_package_name=$TEST_PACKAGE_NAME" >> $GITHUB_OUTPUT
+
+      - name: Test upload with modified package name
+        if: github.event.inputs.skip_upload == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=== Testing upload with modified package name ==="
+          cd python
+          
+          pip install twine
+          
+          TEST_PACKAGE_NAME="${{ steps.modify-package.outputs.test_package_name }}"
+          UPLOAD_URL="https://upload.pkg.github.com/${{ github.repository_owner }}/"
+          
+          echo "Test package name: $TEST_PACKAGE_NAME"
+          echo "Upload URL: $UPLOAD_URL"
+          echo ""
+          echo "This test will determine if:"
+          echo "✅ SUCCESS: Package name conflict was the issue (original 'sglang' taken)"
+          echo "❌ FAILURE: General GitHub Packages configuration issue"
+          
+          # 实际上传测试包
+          echo ""
+          echo "=== Uploading test package ==="
+          if twine upload \
+            --repository-url "$UPLOAD_URL" \
+            dist/* \
+            --verbose \
+            --username "${{ github.actor }}" \
+            --password "$GITHUB_TOKEN"; then
+            echo ""
+            echo "✅✅✅ TEST SUCCESSFUL! ✅✅✅"
+            echo ""
+            echo "The upload succeeded with package name: $TEST_PACKAGE_NAME"
+            echo "This indicates that:"
+            echo "1. GitHub Packages is working correctly"
+            echo "2. The original package name 'sglang' is likely already taken"
+            echo "3. You need to use a different package name"
+            echo ""
+            echo "Test package available at:"
+            echo "https://github.com/${{ github.repository_owner }}?tab=packages"
+            echo ""
+            echo "To install test package:"
+            echo "pip install --index-url https://pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/simple $TEST_PACKAGE_NAME"
+          else
+            echo ""
+            echo "❌❌❌ TEST FAILED ❌❌❌"
+            echo ""
+            echo "The upload failed even with modified package name: $TEST_PACKAGE_NAME"
+            echo "This indicates that:"
+            echo "1. GitHub Packages has general configuration issues"
+            echo "2. The problem is NOT package name conflict"
+            echo "3. You should use GHCR alternative or contact GitHub support"
+            echo ""
+            echo "Recommended next steps:"
+            echo "1. Run .github/workflows/diagnose-ghpkg.yml for detailed diagnosis"
+            echo "2. Use .github/workflows/ghcr-as-alternative.yml as alternative"
+            echo "3. Check account settings for GitHub Packages"
+          fi
+          
+          # 恢复原始 pyproject.toml
+          mv pyproject.toml.backup pyproject.toml
+
+      - name: Dry run (show commands only)
+        if: github.event.inputs.skip_upload == 'true'
+        run: |
+          echo "=== Dry Run - Showing Commands ==="
+          echo ""
+          echo "Test package name: sglang_${{ github.event.inputs.test_suffix }}"
+          echo ""
+          echo "Modification command:"
+          echo "sed -i \"s/name = \\\"sglang\\\"/name = \\\"sglang_${{ github.event.inputs.test_suffix }}\\\"/\" python/pyproject.toml"
+          echo ""
+          echo "Upload command:"
+          echo "twine upload \\"
+          echo "  --repository-url \"https://upload.pkg.github.com/${{ github.repository_owner }}/\" \\"
+          echo "  python/dist/* \\"
+          echo "  --verbose \\"
+          echo "  --username \"${{ github.actor }}\" \\"
+          echo "  --password \"\$GITHUB_TOKEN\""
+          echo ""
+          echo "Install command:"
+          echo "pip install --index-url https://pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/simple sglang_${{ github.event.inputs.test_suffix }}"
+
+      - name: Restore original package
+        if: always()
+        run: |
+          echo "=== Restoring original package configuration ==="
+          cd python
+          
+          # 检查是否有备份文件
+          if [ -f "pyproject.toml.backup" ]; then
+            mv pyproject.toml.backup pyproject.toml
+            echo "✅ Original pyproject.toml restored"
+          else
+            echo "⚠️  No backup found, checking current state..."
+            grep "name =" pyproject.toml
+          fi
+          
+          # 清理测试构建文件
+          rm -rf dist/ build/ *.egg-info/ 2>/dev/null || true
+          
+          # 重新构建原始包以确保一致性
+          echo "Rebuilding original package..."
+          python -m build
+          echo "Original package restored and rebuilt"
+
+      - name: Generate test report
+        run: |
+          echo ""
+          echo "=========================================="
+          echo "Package Name Conflict Test Report"
+          echo "=========================================="
+          echo ""
+          echo "Test Configuration:"
+          echo "- Original package name: sglang"
+          echo "- Test suffix: ${{ github.event.inputs.test_suffix }}"
+          echo "- Test package name: sglang_${{ github.event.inputs.test_suffix }}"
+          echo "- Upload URL: https://upload.pkg.github.com/${{ github.repository_owner }}/"
+          echo ""
+          echo "Interpretation of Results:"
+          echo ""
+          echo "If test SUCCEEDED:"
+          echo "  ✅ Package name 'sglang' is likely already taken"
+          echo "  ✅ GitHub Packages is working correctly"
+          echo "  ✅ Solution: Use different package name or add unique suffix"
+          echo ""
+          echo "If test FAILED:"
+          echo "  ❌ GitHub Packages has general configuration issues"
+          echo "  ❌ Problem is NOT package name conflict"
+          echo "  ❌ Solution: Use GHCR alternative or contact GitHub support"
+          echo ""
+          echo "Next steps based on result:"
+          echo "1. If succeeded: Modify pyproject.toml to use unique package name"
+          echo "2. If failed: Use .github/workflows/ghcr-as-alternative.yml"
+          echo "3. Run .github/workflows/diagnose-ghpkg.yml for detailed diagnosis"
+          echo ""
+          echo "Alternative workflows:"
+          echo "- .github/workflows/ghcr-as-alternative.yml (GHCR publishing)"
+          echo "- .github/workflows/test-fork-packages.yml (original test with suffix)"
+          echo "=========================================="
