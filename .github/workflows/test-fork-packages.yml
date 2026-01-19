@@ -171,7 +171,7 @@ jobs:
             echo "To test actual PyPI upload, configure PYPI_TOKEN secret"
           fi
 
-      - name: Test GitHub Packages upload (dry run)
+     - name: Test GitHub Packages upload (dry run)
        if: github.event.inputs.test_mode == 'dry-run' && steps.build.outputs.build_success == 'true'
        env:
          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -193,7 +193,7 @@ jobs:
          echo ""
          echo "To actually upload, run with test_mode: 'actual-upload'"
 
-      - name: Actual upload to GitHub Packages
+     - name: Actual upload to GitHub Packages
        if: github.event.inputs.test_mode == 'actual-upload' && steps.build.outputs.build_success == 'true' && env.CAN_UPLOAD_TO_GHCR == 'true'
        env:
          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
