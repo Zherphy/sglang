@@ -171,27 +171,25 @@ jobs:
             echo "To test actual PyPI upload, configure PYPI_TOKEN secret"
           fi
 
-      - name: Test GitHub Packages upload (dry run)
-        if: github.event.inputs.test_mode == 'dry-run' && steps.build.outputs.build_success == 'true'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          echo "=== GitHub Packages Upload Dry Run ==="
-          cd python
-          
-          # 提取仓库名称
-          REPO_NAME="${{ github.repository }}"
-          if [[ "$REPO_NAME" == *"/"* ]]; then
-            REPO_NAME="${REPO_NAME##*/}"
-          fi
-          
-          echo "GitHub Packages repository URL:"
-          echo "https://upload.pkg.github.com/${{ github.repository_owner }}/$REPO_NAME"
-          echo ""
-          echo "Upload command would be:"
-          echo "twine upload --repository-url https://upload.pkg.github.com/${{ github.repository_owner }}/$REPO_NAME dist/* --username ${{ github.actor }} --password \$GITHUB_TOKEN"
-          echo ""
-          echo "To actually upload, run with test_mode: 'actual-upload'"
+     - name: Test GitHub Packages upload (dry run)
+       if: github.event.inputs.test_mode == 'dry-run' && steps.build.outputs.build_success == 'true'
+       env:
+         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+       run: |
+         echo "=== GitHub Packages Upload Dry Run ==="
+         cd python
+         
+         # GitHub Packages Python 包使用包名，而不是仓库名
+         # 从 pyproject.toml 读取包名
+         PACKAGE_NAME="sglang"  # 根据 pyproject.toml 中的 name 字段
+         
+         echo "GitHub Packages repository URL:"
+         echo "https://upload.pkg.github.com/${{ github.repository_owner }}/$PACKAGE_NAME"
+         echo ""
+         echo "Upload command would be:"
+         echo "twine upload --repository-url https://upload.pkg.github.com/${{ github.repository_owner }}/$PACKAGE_NAME dist/* --username ${{ github.actor }} --password \$GITHUB_TOKEN"
+         echo ""
+         echo "To actually upload, run with test_mode: 'actual-upload'"
 
       - name: Actual upload to GitHub Packages
         if: github.event.inputs.test_mode == 'actual-upload' && steps.build.outputs.build_success == 'true' && env.CAN_UPLOAD_TO_GHCR == 'true'
@@ -201,17 +199,15 @@ jobs:
           echo "=== Actual Upload to GitHub Packages ==="
           cd python
           
-          # 提取仓库名称
-          REPO_NAME="${{ github.repository }}"
-          if [[ "$REPO_NAME" == *"/"* ]]; then
-            REPO_NAME="${REPO_NAME##*/}"
-          fi
+          # GitHub Packages Python 包使用包名，而不是仓库名
+          # 从 pyproject.toml 读取包名
+          PACKAGE_NAME="sglang"  # 根据 pyproject.toml 中的 name 字段
           
-          echo "Uploading to: https://upload.pkg.github.com/${{ github.repository_owner }}/$REPO_NAME"
+          echo "Uploading to: https://upload.pkg.github.com/${{ github.repository_owner }}/$PACKAGE_NAME"
           
           # 实际上传
           twine upload \
-            --repository-url "https://upload.pkg.github.com/${{ github.repository_owner }}/$REPO_NAME" \
+            --repository-url "https://upload.pkg.github.com/${{ github.repository_owner }}/$PACKAGE_NAME" \
             dist/* \
             --verbose \
             --username "${{ github.actor }}" \
@@ -220,7 +216,7 @@ jobs:
           echo "✅ Upload completed!"
           echo ""
           echo "To install from your GitHub Packages:"
-          echo "pip install --index-url https://pkg.github.com/${{ github.repository_owner }}/$REPO_NAME/simple sglang"
+          echo "pip install --index-url https://pkg.github.com/${{ github.repository_owner }}/$PACKAGE_NAME/simple sglang"
 
       - name: Skip actual upload (insufficient permissions)
         if: github.event.inputs.test_mode == 'actual-upload' && env.CAN_UPLOAD_TO_GHCR != 'true'
@@ -333,13 +329,10 @@ jobs:
             echo ""
             echo "To use the published packages:"
             if [ "${{ github.event.inputs.package_type }}" = "python" ]; then
-              # 提取仓库名称
-              REPO_NAME="${{ github.repository }}"
-              if [[ "$REPO_NAME" == *"/"* ]]; then
-                REPO_NAME="${REPO_NAME##*/}"
-              fi
+              # GitHub Packages Python 包使用包名，而不是仓库名
+              PACKAGE_NAME="sglang"
               echo "Python package:"
-              echo "pip install --index-url https://pkg.github.com/${{ github.repository_owner }}/$REPO_NAME/simple sglang"
+              echo "pip install --index-url https://pkg.github.com/${{ github.repository_owner }}/$PACKAGE_NAME/simple sglang"
             elif [ "${{ github.event.inputs.package_type }}" = "docker" ]; then
               echo "Docker image:"
               echo "docker pull ghcr.io/${{ github.repository }}:test-${{ github.run_id }}"
