@@ -1,0 +1,243 @@
+# 简单的 GitHub Packages 测试
+# 使用官方推荐的方法测试 Python 包上传
+
+name: Simple GitHub Packages Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_upload:
+        description: 'Test actual upload'
+        type: boolean
+        default: false
+        required: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Build minimal test package
+        run: |
+          # 创建一个简单的测试包
+          mkdir -p test-pkg
+          cd test-pkg
+          
+          cat > pyproject.toml << EOF
+          [build-system]
+          requires = ["setuptools>=61.0", "wheel"]
+          build-backend = "setuptools.build_meta"
+          
+          [project]
+          name = "test-sglang-pkg"
+          version = "0.1.0"
+          description = "Test package for GitHub Packages"
+          authors = [{name = "Test User", email = "test@example.com"}]
+          readme = "README.md"
+          license = {text = "MIT"}
+          classifiers = [
+              "Programming Language :: Python :: 3",
+              "License :: OSI Approved :: MIT License",
+          ]
+          
+          [project.urls]
+          Homepage = "https://github.com/${{ github.repository }}"
+          EOF
+          
+          cat > README.md << EOF
+          # Test Package
+          This is a test package for GitHub Packages.
+          EOF
+          
+          mkdir -p src/test_pkg
+          cat > src/test_pkg/__init__.py << EOF
+          """Test package for GitHub Packages."""
+          __version__ = "0.1.0"
+          EOF
+          
+          # 构建包
+          pip install build
+          python -m build
+          
+          echo "=== Built packages ==="
+          ls -lh dist/
+
+      - name: Show GitHub context
+        run: |
+          echo "=== GitHub Context ==="
+          echo "Repository: ${{ github.repository }}"
+          echo "Repository owner: ${{ github.repository_owner }}"
+          echo "Repository name: ${{ github.event.repository.name }}"
+          echo "Actor: ${{ github.actor }}"
+          echo "Event name: ${{ github.event_name }}"
+          echo ""
+          echo "=== Expected GitHub Packages URLs ==="
+          echo "Upload URL: https://upload.pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}"
+          echo "Install URL: https://pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/simple"
+          echo ""
+          echo "=== Alternative URLs ==="
+          echo "1. Using repository name directly: https://upload.pkg.github.com/${{ github.repository }}"
+          echo "2. Using owner only: https://upload.pkg.github.com/${{ github.repository_owner }}/_"
+          echo "3. Using package name: https://upload.pkg.github.com/${{ github.repository_owner }}/test-sglang-pkg"
+
+      - name: Test URL accessibility
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=== Testing URL Accessibility ==="
+          cd test-pkg
+          
+          # 测试不同的 URL 格式
+          TEST_URLS=(
+            "https://upload.pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}"
+            "https://upload.pkg.github.com/${{ github.repository }}"
+            "https://upload.pkg.github.com/${{ github.repository_owner }}/_"
+            "https://upload.pkg.github.com/${{ github.repository_owner }}/test-sglang-pkg"
+          )
+          
+          for url in "${TEST_URLS[@]}"; do
+            echo ""
+            echo "Testing: $url"
+            echo "--------------------------------"
+            
+            # 使用 curl 检查 URL
+            status_code=$(curl -s -o /dev/null -w "%{http_code}" -H "Authorization: token $GITHUB_TOKEN" "$url")
+            echo "HTTP Status: $status_code"
+            
+            if [ "$status_code" = "200" ] || [ "$status_code" = "201" ] || [ "$status_code" = "404" ]; then
+              echo "URL responded with $status_code"
+              
+              # 如果是 404，尝试 HEAD 请求
+              if [ "$status_code" = "404" ]; then
+                echo "Package may not exist yet - this is normal for first upload"
+                echo "Trying HEAD request..."
+                curl -I -H "Authorization: token $GITHUB_TOKEN" "$url" 2>/dev/null | head -5
+              fi
+            else
+              echo "Unexpected response"
+            fi
+          done
+
+      - name: Check GitHub Packages API
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=== Checking GitHub Packages API ==="
+          
+          # 检查用户/组织的包
+          echo "Checking packages for ${{ github.repository_owner }}..."
+          curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/user/packages?package_type=pypi" \
+            | jq -r '.[] | "Package: \(.name) - Visibility: \(.visibility)"' 2>/dev/null || echo "No packages found or error"
+          
+          echo ""
+          echo "=== Checking repository packages ==="
+          # 检查仓库的包（如果支持）
+          curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/packages" \
+            | jq -r '.[] | "Package: \(.name)"' 2>/dev/null || echo "No repository packages found"
+
+      - name: Test actual upload (conditional)
+        if: github.event.inputs.test_upload == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=== Testing Actual Upload ==="
+          cd test-pkg
+          
+          pip install twine
+          
+          echo "Using URL: https://upload.pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}"
+          
+          # 尝试上传
+          if twine upload \
+            --repository-url "https://upload.pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}" \
+            dist/* \
+            --username "${{ github.actor }}" \
+            --password "$GITHUB_TOKEN" \
+            --verbose; then
+            echo "✅ Upload successful!"
+            echo ""
+            echo "Package should now be available at:"
+            echo "https://github.com/${{ github.repository_owner }}?tab=packages"
+          else
+            echo "❌ Upload failed"
+            echo ""
+            echo "=== Troubleshooting ==="
+            echo "1. Check if GitHub Packages is enabled"
+            echo "2. Check GITHUB_TOKEN permissions"
+            echo "3. Try creating package manually first"
+            echo "4. Check network connectivity"
+          fi
+
+      - name: Dry-run upload (default)
+        if: github.event.inputs.test_upload != 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=== Dry-run Upload Test ==="
+          cd test-pkg
+          
+          pip install twine
+          
+          echo "Testing with dry-run..."
+          
+          # 使用 --dry-run 测试
+          if twine upload \
+            --repository-url "https://upload.pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}" \
+            dist/* \
+            --username "${{ github.actor }}" \
+            --password "$GITHUB_TOKEN" \
+            --dry-run \
+            --verbose; then
+            echo "✅ Dry-run successful!"
+            echo ""
+            echo "To perform actual upload, run this workflow with test_upload=true"
+          else
+            echo "❌ Dry-run failed"
+            echo ""
+            echo "This indicates a configuration issue."
+            echo "Check the error message above for details."
+          fi
+
+      - name: Generate recommendations
+        run: |
+          echo "=== Recommendations ==="
+          echo ""
+          echo "Based on GitHub documentation:"
+          echo ""
+          echo "1. CORRECT UPLOAD URL FOR PYTHON PACKAGES:"
+          echo "   https://upload.pkg.github.com/OWNER/REPO"
+          echo "   Where REPO is the repository name (not package name)"
+          echo ""
+          echo "2. CORRECT INSTALL URL:"
+          echo "   https://pkg.github.com/OWNER/REPO/simple"
+          echo ""
+          echo "3. For your repository (${{ github.repository }}):"
+          echo "   Upload: https://upload.pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}"
+          echo "   Install: https://pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/simple"
+          echo ""
+          echo "4. Common issues:"
+          echo "   - 404 Not Found: Package doesn't exist yet (first upload will create it)"
+          echo "   - 403 Forbidden: Insufficient permissions (need packages: write)"
+          echo "   - 405 Method Not Allowed: Wrong URL format"
+          echo ""
+          echo "5. Solution for 404:"
+          echo "   The first upload should create the package automatically"
+          echo "   If it fails, try creating the package manually via GitHub UI"
+          echo ""
+          echo "=== Next Steps ==="
+          echo "1. Run this workflow with test_upload=true to test actual upload"
+          echo "2. Check https://github.com/${{ github.repository_owner }}?tab=packages"
+          echo "3. If upload fails, check workflow logs for specific error"

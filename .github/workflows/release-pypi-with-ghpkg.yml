@@ -97,13 +97,26 @@ jobs:
           
           echo "✅ Uploading to GitHub Packages..."
           
+          # 使用正确的 URL 格式
+          # GitHub Packages Python 仓库使用：https://upload.pkg.github.com/OWNER/REPO
+          # 其中 REPO 是仓库名称（不是包名称）
+          REPO_NAME="${{ github.repository }}"
+          # 从 "owner/repo" 格式中提取仓库名称
+          if [[ "$REPO_NAME" == *"/"* ]]; then
+            REPO_NAME="${REPO_NAME##*/}"
+          fi
+          
+          echo "Repository owner: ${{ github.repository_owner }}"
+          echo "Repository name: $REPO_NAME"
+          echo "Upload URL: https://upload.pkg.github.com/${{ github.repository_owner }}/$REPO_NAME"
+          
           # 方法1：使用 repository-url 参数（推荐）
           python3 -m twine upload \
-            --repository-url https://upload.pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }} \
+            --repository-url "https://upload.pkg.github.com/${{ github.repository_owner }}/$REPO_NAME" \
             dist/* \
             --verbose \
-            --username ${{ github.actor }} \
-            --password $GITHUB_TOKEN
+            --username "${{ github.actor }}" \
+            --password "$GITHUB_TOKEN"
 
       - name: Skip GitHub Packages upload (test mode)
         if: env.SHOULD_UPLOAD != 'true'

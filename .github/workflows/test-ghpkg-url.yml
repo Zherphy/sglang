@@ -1,0 +1,179 @@
+# 测试 GitHub Packages URL 格式
+# 此工作流用于确定正确的 Python 包上传 URL
+
+name: Test GitHub Packages URL Format
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test-urls:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Build test package
+        run: |
+          cd python
+          cp ../README.md ../LICENSE . 2>/dev/null || echo "Files not found, continuing..."
+          pip install build twine
+          python -m build
+          echo "Package built successfully"
+          ls -lh dist/
+
+      - name: Test different URL formats
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cd python
+          
+          echo "=== Testing GitHub Packages URL Formats ==="
+          echo "Repository: ${{ github.repository }}"
+          echo "Repository owner: ${{ github.repository_owner }}"
+          echo "Repository name: ${{ github.event.repository.name }}"
+          echo ""
+          
+          # 定义要测试的 URL 格式
+          URL_FORMATS=(
+            "https://upload.pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}"
+            "https://upload.pkg.github.com/${{ github.repository_owner }}/*"
+            "https://upload.pkg.github.com/${{ github.repository }}"
+            "https://upload.pkg.github.com/${{ github.repository_owner }}/_"
+            "https://upload.pkg.github.com/${{ github.repository_owner }}/python"
+          )
+          
+          for url in "${URL_FORMATS[@]}"; do
+            echo ""
+            echo "Testing URL: $url"
+            echo "----------------------------------------"
+            
+            # 使用 curl 测试 URL（不实际上传）
+            if curl -s -I -H "Authorization: token $GITHUB_TOKEN" "$url" 2>/dev/null | head -5; then
+              echo "URL responded (check status above)"
+            else
+              echo "URL test failed or no response"
+            fi
+            
+            # 测试 twine upload（dry-run）
+            if twine upload --repository-url "$url" dist/* --username "${{ github.actor }}" --password "$GITHUB_TOKEN" --skip-existing --non-interactive --dry-run 2>&1 | head -10; then
+              echo "Twine dry-run succeeded for: $url"
+            else
+              echo "Twine dry-run failed for: $url"
+            fi
+          done
+          
+          echo ""
+          echo "=== GitHub Packages Documentation ==="
+          echo "According to GitHub Docs:"
+          echo "1. Python packages: https://upload.pkg.github.com/OWNER/REPO"
+          echo "2. Install: pip install --index-url https://pkg.github.com/OWNER/REPO/simple PACKAGE"
+          echo ""
+          echo "=== Checking existing packages ==="
+          # 检查是否已有包存在
+          curl -s -H "Authorization: token $GITHUB_TOKEN" \
+            "https://api.github.com/user/packages?package_type=pypi" | jq -r '.[].name' 2>/dev/null || echo "No existing packages or error"
+
+      - name: Check GitHub Packages settings
+        run: |
+          echo "=== GitHub Packages Settings ==="
+          echo ""
+          echo "1. Ensure GitHub Packages is enabled for your account:"
+          echo "   - Personal account: Enabled by default"
+          echo "   - Organization: May need to be enabled in settings"
+          echo ""
+          echo "2. Check if package 'sglang' already exists:"
+          echo "   Visit: https://github.com/${{ github.repository_owner }}?tab=packages"
+          echo ""
+          echo "3. For first-time upload, the package will be created automatically"
+          echo ""
+          echo "4. Alternative: Use GitHub Container Registry for Python packages"
+          echo "   Some sources suggest using ghcr.io for all package types"
+
+      - name: Test actual upload with different methods
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=== Testing Actual Upload Methods ==="
+          cd python
+          
+          # 方法1：使用 .pypirc 配置文件
+          echo "Method 1: Using .pypirc configuration"
+          cat > ~/.pypirc << EOF
+          [distutils]
+          index-servers =
+              github
+
+          [github]
+          repository = https://upload.pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}
+          username = ${{ github.actor }}
+          password = $GITHUB_TOKEN
+          EOF
+          
+          echo "Attempting upload with .pypirc..."
+          if twine upload --repository github dist/* --skip-existing --verbose 2>&1 | tail -20; then
+            echo "✅ Upload successful with .pypirc"
+          else
+            echo "❌ Upload failed with .pypirc"
+          fi
+          
+          # 方法2：直接使用 URL（带重试）
+          echo ""
+          echo "Method 2: Direct URL with retry"
+          MAX_RETRIES=3
+          RETRY_COUNT=0
+          
+          while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+            echo "Attempt $((RETRY_COUNT+1)) of $MAX_RETRIES"
+            if twine upload \
+              --repository-url https://upload.pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }} \
+              dist/* \
+              --username "${{ github.actor }}" \
+              --password "$GITHUB_TOKEN" \
+              --skip-existing \
+              --verbose 2>&1 | tail -10; then
+              echo "✅ Upload successful"
+              break
+            else
+              echo "❌ Upload attempt failed"
+              RETRY_COUNT=$((RETRY_COUNT+1))
+              sleep 5
+            fi
+          done
+          
+          if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+            echo "❌ All upload attempts failed"
+            echo ""
+            echo "=== Troubleshooting Steps ==="
+            echo "1. Check if GitHub Packages is enabled for your account"
+            echo "2. Try creating the package manually first"
+            echo "3. Check GITHUB_TOKEN permissions"
+            echo "4. Try a different URL format"
+          fi
+
+      - name: Generate test report
+        run: |
+          echo "=== Test Report ==="
+          echo ""
+          echo "Summary:"
+          echo "- Repository: ${{ github.repository }}"
+          echo "- Test completed at: $(date)"
+          echo ""
+          echo "Next steps:"
+          echo "1. Check the output above for successful URL format"
+          echo "2. If all tests fail, GitHub Packages may not be enabled"
+          echo "3. Try enabling GitHub Packages in account/organization settings"
+          echo "4. Consider using TestPyPI for testing instead"
+          echo ""
+          echo "Documentation links:"
+          echo "- GitHub Packages Python: https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-python-registry"
+          echo "- Troubleshooting: https://docs.github.com/en/packages/working-with-a-github-packages-registry/troubleshooting-python-publishing"
