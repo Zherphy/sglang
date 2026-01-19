@@ -97,17 +97,19 @@ jobs:
           
           echo "✅ Uploading to GitHub Packages..."
           
-          # GitHub Packages Python 包使用包名，而不是仓库名
-          # 从 pyproject.toml 读取包名
-          PACKAGE_NAME="sglang"  # 根据 pyproject.toml 中的 name 字段
+          # 正确的 GitHub Packages URL 格式 - 末尾有斜杠！
+          # 根据官方文档：https://upload.pkg.github.com/OWNER/
+          UPLOAD_URL="https://upload.pkg.github.com/${{ github.repository_owner }}/"
           
           echo "Repository owner: ${{ github.repository_owner }}"
-          echo "Package name: $PACKAGE_NAME"
-          echo "Upload URL: https://upload.pkg.github.com/${{ github.repository_owner }}/$PACKAGE_NAME"
+          echo "Package name: sglang (from pyproject.toml)"
+          echo "Upload URL (CORRECT FORMAT): $UPLOAD_URL"
+          echo ""
+          echo "Note: URL ends with slash! Package name comes from pyproject.toml"
           
           # 方法1：使用 repository-url 参数（推荐）
           python3 -m twine upload \
-            --repository-url "https://upload.pkg.github.com/${{ github.repository_owner }}/$PACKAGE_NAME" \
+            --repository-url "$UPLOAD_URL" \
             dist/* \
             --verbose \
             --username "${{ github.actor }}" \

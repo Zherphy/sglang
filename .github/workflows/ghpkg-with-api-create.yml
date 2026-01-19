@@ -1,0 +1,217 @@
+# 使用 GitHub API 先创建包，然后上传
+# 解决 404 Not Found 问题
+
+name: GitHub Packages with API Creation
+
+on:
+  workflow_dispatch:
+    inputs:
+      create_package:
+        description: 'Create package via API first'
+        type: boolean
+        default: true
+        required: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Build Python package
+        run: |
+          cd python
+          cp ../README.md ../LICENSE .
+          pip install build
+          python -m build
+          echo "=== Built packages ==="
+          ls -lh dist/
+
+      - name: Create package via GitHub API (if needed)
+        if: github.event.inputs.create_package == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=== Creating package via GitHub API ==="
+          
+          PACKAGE_NAME="sglang"
+          OWNER="${{ github.repository_owner }}"
+          
+          echo "Package name: $PACKAGE_NAME"
+          echo "Owner: $OWNER"
+          
+          # 检查包是否已存在
+          echo "Checking if package exists..."
+          response=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/user/packages/pypi/$PACKAGE_NAME")
+          
+          echo "Package check response: $response"
+          
+          if [ "$response" = "200" ]; then
+            echo "✅ Package already exists"
+          elif [ "$response" = "404" ]; then
+            echo "Package does not exist, attempting to create..."
+            
+            # 尝试创建包（GitHub Packages 通常会自动创建）
+            echo "Note: GitHub Packages usually creates packages automatically on first upload"
+            echo "If automatic creation fails, you may need to create it manually via:"
+            echo "1. Go to https://github.com/$OWNER?tab=packages"
+            echo "2. Click 'New package'"
+            echo "3. Select 'Python'"
+            echo "4. Enter package name: $PACKAGE_NAME"
+          else
+            echo "⚠️  Unexpected response: $response"
+          fi
+          
+          echo ""
+          echo "=== Testing different URL formats ==="
+          
+          # 测试不同的 URL 格式
+          URL_FORMATS=(
+            "https://upload.pkg.github.com/$OWNER/"
+            "https://upload.pkg.github.com/$OWNER/$PACKAGE_NAME"
+            "https://upload.pkg.github.com/$OWNER/_"
+          )
+          
+          for url in "${URL_FORMATS[@]}"; do
+            echo ""
+            echo "Testing URL: $url"
+            echo "HTTP HEAD request..."
+            status=$(curl -s -o /dev/null -w "%{http_code}" -I \
+              -H "Authorization: token $GITHUB_TOKEN" \
+              "$url")
+            echo "Status: $status"
+          done
+
+      - name: Upload with different URL formats
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=== Testing upload with different URL formats ==="
+          cd python
+          
+          pip install twine
+          
+          OWNER="${{ github.repository_owner }}"
+          PACKAGE_NAME="sglang"
+          
+          # 方法 1: 使用标准的 upload.pkg.github.com/OWNER/ 格式
+          echo ""
+          echo "Method 1: Standard format (upload.pkg.github.com/OWNER/)"
+          echo "URL: https://upload.pkg.github.com/$OWNER/"
+          
+          if twine upload \
+            --repository-url "https://upload.pkg.github.com/$OWNER/" \
+            dist/* \
+            --username "${{ github.actor }}" \
+            --password "$GITHUB_TOKEN" \
+            --verbose; then
+            echo "✅ Method 1 succeeded!"
+          else
+            echo "❌ Method 1 failed"
+          fi
+          
+          # 方法 2: 使用 upload.pkg.github.com/OWNER/PACKAGE 格式
+          echo ""
+          echo "Method 2: With package name (upload.pkg.github.com/OWNER/PACKAGE)"
+          echo "URL: https://upload.pkg.github.com/$OWNER/$PACKAGE_NAME"
+          
+          if twine upload \
+            --repository-url "https://upload.pkg.github.com/$OWNER/$PACKAGE_NAME" \
+            dist/* \
+            --username "${{ github.actor }}" \
+            --password "$GITHUB_TOKEN" \
+            --verbose; then
+            echo "✅ Method 2 succeeded!"
+          else
+            echo "❌ Method 2 failed"
+          fi
+          
+          # 方法 3: 使用 .pypirc 配置文件
+          echo ""
+          echo "Method 3: Using .pypirc configuration"
+          
+          cat > ~/.pypirc << EOF
+          [distutils]
+          index-servers =
+              github
+
+          [github]
+          repository = https://upload.pkg.github.com/$OWNER/
+          username = ${{ github.actor }}
+          password = $GITHUB_TOKEN
+          EOF
+          
+          if twine upload --repository github dist/* --verbose; then
+            echo "✅ Method 3 succeeded!"
+          else
+            echo "❌ Method 3 failed"
+          fi
+
+      - name: Alternative approach - Use GitHub Container Registry
+        if: failure()
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=== Alternative: Using GitHub Container Registry for Python packages ==="
+          echo ""
+          echo "Some projects use GHCR for Python packages as OCI artifacts."
+          echo ""
+          echo "Install crane (OCI tool):"
+          echo "curl -L https://github.com/google/go-containerregistry/releases/latest/download/go-containerregistry_Linux_x86_64.tar.gz | tar xz crane"
+          echo ""
+          echo "Push Python package as OCI artifact:"
+          echo "crane push python/dist/*.whl ghcr.io/${{ github.repository_owner }}/sglang:latest"
+          echo ""
+          echo "This is an alternative if GitHub Packages Python registry doesn't work."
+
+      - name: Manual creation instructions
+        run: |
+          echo "=== Manual Package Creation Instructions ==="
+          echo ""
+          echo "If automatic upload fails with 404, you may need to create the package manually:"
+          echo ""
+          echo "1. Go to: https://github.com/${{ github.repository_owner }}?tab=packages"
+          echo "2. Click 'New package'"
+          echo "3. Select 'Python' as package type"
+          echo "4. Enter package name: 'sglang'"
+          echo "5. Set visibility (public or private)"
+          echo "6. Click 'Create package'"
+          echo ""
+          echo "After creating the package manually, try the upload again."
+          echo ""
+          echo "=== Verify Package Existence ==="
+          echo "Check if package exists via API:"
+          echo "curl -H 'Authorization: token \$GITHUB_TOKEN' \\"
+          echo "  https://api.github.com/user/packages/pypi/sglang"
+
+      - name: Summary and next steps
+        run: |
+          echo "=== Summary ==="
+          echo ""
+          echo "GitHub Packages Python registry issues:"
+          echo "1. 404 Not Found usually means the package doesn't exist"
+          echo "2. Packages are created automatically on first successful upload"
+          echo "3. If automatic creation fails, manual creation may be needed"
+          echo ""
+          echo "Next steps:"
+          echo "1. Try creating the package manually via GitHub UI"
+          echo "2. Ensure GITHUB_TOKEN has packages:write permission"
+          echo "3. Check repository settings for GitHub Packages"
+          echo "4. Consider using TestPyPI or GHCR as alternatives"
+          echo ""
+          echo "Documentation:"
+          echo "- https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-python-registry"
+          echo "- https://docs.github.com/en/packages/working-with-a-github-packages-registry/troubleshooting-python-publishing"

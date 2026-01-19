@@ -179,15 +179,17 @@ jobs:
           echo "=== GitHub Packages Upload Dry Run ==="
           cd python
           
-          # GitHub Packages Python 包使用包名，而不是仓库名
-          # 从 pyproject.toml 读取包名
-          PACKAGE_NAME="sglang"  # 根据 pyproject.toml 中的 name 字段
+          # 正确的 GitHub Packages URL 格式 - 末尾有斜杠！
+          # 根据官方文档：https://upload.pkg.github.com/OWNER/
+          UPLOAD_URL="https://upload.pkg.github.com/${{ github.repository_owner }}/"
           
-          echo "GitHub Packages repository URL:"
-          echo "https://upload.pkg.github.com/${{ github.repository_owner }}/$PACKAGE_NAME"
+          echo "GitHub Packages repository URL (CORRECT FORMAT):"
+          echo "$UPLOAD_URL"
           echo ""
           echo "Upload command would be:"
-          echo "twine upload --repository-url https://upload.pkg.github.com/${{ github.repository_owner }}/$PACKAGE_NAME dist/* --username ${{ github.actor }} --password \$GITHUB_TOKEN"
+          echo "twine upload --repository-url $UPLOAD_URL dist/* --username ${{ github.actor }} --password \$GITHUB_TOKEN"
+          echo ""
+          echo "Note: Package name 'sglang' comes from pyproject.toml, not from URL!"
           echo ""
           echo "To actually upload, run with test_mode: 'actual-upload'"
 
@@ -199,15 +201,18 @@ jobs:
           echo "=== Actual Upload to GitHub Packages ==="
           cd python
           
-          # GitHub Packages Python 包使用包名，而不是仓库名
-          # 从 pyproject.toml 读取包名
-          PACKAGE_NAME="sglang"  # 根据 pyproject.toml 中的 name 字段
+          # 正确的 GitHub Packages URL 格式 - 末尾有斜杠！
+          # 根据官方文档：https://upload.pkg.github.com/OWNER/
+          UPLOAD_URL="https://upload.pkg.github.com/${{ github.repository_owner }}/"
           
-          echo "Uploading to: https://upload.pkg.github.com/${{ github.repository_owner }}/$PACKAGE_NAME"
+          echo "Uploading to (CORRECT FORMAT): $UPLOAD_URL"
+          echo ""
+          echo "Note: Package name 'sglang' comes from pyproject.toml"
+          echo "      The URL ends with a slash!"
           
           # 实际上传
           twine upload \
-            --repository-url "https://upload.pkg.github.com/${{ github.repository_owner }}/$PACKAGE_NAME" \
+            --repository-url "$UPLOAD_URL" \
             dist/* \
             --verbose \
             --username "${{ github.actor }}" \
@@ -216,7 +221,7 @@ jobs:
           echo "✅ Upload completed!"
           echo ""
           echo "To install from your GitHub Packages:"
-          echo "pip install --index-url https://pkg.github.com/${{ github.repository_owner }}/$PACKAGE_NAME/simple sglang"
+          echo "pip install --index-url https://pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/simple sglang"
 
       - name: Skip actual upload (insufficient permissions)
         if: github.event.inputs.test_mode == 'actual-upload' && env.CAN_UPLOAD_TO_GHCR != 'true'

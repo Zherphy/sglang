@@ -1,0 +1,195 @@
+# GitHub Packages 正确格式的工作流
+# 使用官方推荐的 URL 格式
+
+name: GitHub Packages Correct Format
+
+on:
+  workflow_dispatch:
+    inputs:
+      skip_upload:
+        description: 'Skip actual upload (dry run only)'
+        type: boolean
+        default: false
+        required: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Build Python package
+        run: |
+          cd python
+          cp ../README.md ../LICENSE .
+          pip install build
+          python -m build
+          echo "=== Built packages ==="
+          ls -lh dist/
+
+      - name: Show correct GitHub Packages configuration
+        run: |
+          echo "=== GitHub Packages Correct Configuration ==="
+          echo ""
+          echo "According to GitHub official documentation:"
+          echo ""
+          echo "1. UPLOAD URL (最重要！):"
+          echo "   https://upload.pkg.github.com/OWNER/"
+          echo "   Note the trailing slash!"
+          echo ""
+          echo "2. For your repository (${{ github.repository }}):"
+          echo "   Upload URL: https://upload.pkg.github.com/${{ github.repository_owner }}/"
+          echo ""
+          echo "3. INSTALL URL:"
+          echo "   https://pkg.github.com/OWNER/REPO/simple"
+          echo "   For installation: https://pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/simple"
+          echo ""
+          echo "4. Package name is determined from pyproject.toml/setup.py"
+          echo "   Not from the URL!"
+          echo ""
+          echo "Reference: https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-python-registry"
+
+      - name: Upload to GitHub Packages (correct format)
+        if: github.event.inputs.skip_upload == 'false'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=== Uploading to GitHub Packages (Correct Format) ==="
+          cd python
+          
+          pip install twine
+          
+          # 正确的 URL 格式 - 末尾有斜杠！
+          UPLOAD_URL="https://upload.pkg.github.com/${{ github.repository_owner }}/"
+          
+          echo "Using CORRECT upload URL: $UPLOAD_URL"
+          echo ""
+          echo "Note: The package name 'sglang' comes from pyproject.toml"
+          echo "      not from the URL!"
+          
+          # 使用正确的格式上传
+          twine upload \
+            --repository-url "$UPLOAD_URL" \
+            dist/* \
+            --verbose \
+            --username "${{ github.actor }}" \
+            --password "$GITHUB_TOKEN"
+          
+          echo ""
+          echo "✅ Upload completed with correct format!"
+          echo ""
+          echo "To install from GitHub Packages:"
+          echo "pip install --index-url https://pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/simple sglang"
+
+      - name: Dry run (show commands only)
+        if: github.event.inputs.skip_upload == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=== Dry Run - Showing Commands ==="
+          cd python
+          
+          echo "Correct upload command would be:"
+          echo "twine upload \\"
+          echo "  --repository-url \"https://upload.pkg.github.com/${{ github.repository_owner }}/\" \\"
+          echo "  dist/* \\"
+          echo "  --verbose \\"
+          echo "  --username \"${{ github.actor }}\" \\"
+          echo "  --password \"\$GITHUB_TOKEN\""
+          echo ""
+          echo "Install command:"
+          echo "pip install --index-url https://pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/simple sglang"
+
+      - name: Verify package via API
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=== Verifying Package via GitHub API ==="
+          
+          # 检查包是否存在
+          echo "Checking if package 'sglang' exists..."
+          
+          response=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/user/packages/pypi/sglang")
+          
+          if [ "$response" = "200" ]; then
+            echo "✅ Package 'sglang' exists in GitHub Packages"
+          elif [ "$response" = "404" ]; then
+            echo "⚠️  Package 'sglang' does not exist yet"
+            echo "   It should be created automatically on first successful upload"
+          else
+            echo "⚠️  Unexpected response: $response"
+          fi
+          
+          echo ""
+          echo "List of your Python packages:"
+          curl -s \
+            -H "Authorization: token $GITHUB_TOKEN" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/user/packages?package_type=pypi" | \
+            jq -r '.[] | "  - \(.name) (\(.visibility))"' 2>/dev/null || echo "  (No packages or error)"
+
+      - name: Troubleshooting guide
+        if: failure()
+        run: |
+          echo "=== Troubleshooting Guide ==="
+          echo ""
+          echo "If upload fails with 404 Not Found:"
+          echo ""
+          echo "1. CHECK URL FORMAT:"
+          echo "   Ensure URL ends with slash: https://upload.pkg.github.com/OWNER/"
+          echo "   Not: https://upload.pkg.github.com/OWNER/PACKAGE"
+          echo ""
+          echo "2. CHECK PERMISSIONS:"
+          echo "   - Repository Settings → Actions → General"
+          echo "   - Workflow permissions: 'Read and write permissions'"
+          echo "   - GITHUB_TOKEN needs 'packages: write' scope"
+          echo ""
+          echo "3. CHECK PACKAGE NAME:"
+          echo "   Package name comes from pyproject.toml: 'name = \"sglang\"'"
+          echo "   This name must be unique across GitHub"
+          echo ""
+          echo "4. MANUAL PACKAGE CREATION:"
+          echo "   If automatic creation fails:"
+          echo "   - Go to https://github.com/${{ github.repository_owner }}?tab=packages"
+          echo "   - Click 'New package' → Select 'Python'"
+          echo "   - Enter name: 'sglang'"
+          echo "   - Create package, then try upload again"
+          echo ""
+          echo "5. ALTERNATIVE SOLUTIONS:"
+          echo "   - Use TestPyPI for testing: https://test.pypi.org"
+          echo "   - Use GitHub Container Registry (GHCR) for Python OCI artifacts"
+          echo "   - Use GitHub Releases to distribute .whl files"
+
+      - name: Success summary
+        if: success()
+        run: |
+          echo "=== Success Summary ==="
+          echo ""
+          echo "✅ GitHub Packages configuration is correct!"
+          echo ""
+          echo "Key points:"
+          echo "1. Upload URL: https://upload.pkg.github.com/${{ github.repository_owner }}/"
+          echo "   (with trailing slash!)"
+          echo ""
+          echo "2. Package name: 'sglang' (from pyproject.toml)"
+          echo ""
+          echo "3. Install from GitHub Packages:"
+          echo "   pip install --index-url https://pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/simple sglang"
+          echo ""
+          echo "4. View your packages:"
+          echo "   https://github.com/${{ github.repository_owner }}?tab=packages"
+          echo ""
+          echo "Documentation: https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-python-registry"
