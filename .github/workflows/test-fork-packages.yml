@@ -389,15 +389,21 @@ jobs:
         run: |
           echo "Building Docker image..."
           
+          # Docker 镜像名称必须全部小写
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_TAG="ghcr.io/${REPO_LOWER}:test-${{ github.run_id }}"
+          
           if [ -f "docker/Dockerfile" ]; then
             # 构建镜像
             docker build \
-              -t ghcr.io/${{ github.repository }}:test-${{ github.run_id }} \
+              -t "$IMAGE_TAG" \
               -f docker/Dockerfile \
               .
             
             echo "✅ Docker image built successfully"
-            echo "Image: ghcr.io/${{ github.repository }}:test-${{ github.run_id }}"
+            echo "Image: $IMAGE_TAG"
+            echo "Original repo: ${{ github.repository }}"
+            echo "Lowercase repo: $REPO_LOWER"
           else
             echo "❌ Dockerfile not found at docker/Dockerfile"
             echo "Available Dockerfiles:"
@@ -408,11 +414,16 @@ jobs:
         if: github.event.inputs.test_mode == 'actual-upload' && env.CAN_UPLOAD_TO_GHCR == 'true'
         run: |
           echo "Pushing Docker image to GHCR..."
-          docker push ghcr.io/${{ github.repository }}:test-${{ github.run_id }}
+          
+          # Docker 镜像名称必须全部小写
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          IMAGE_TAG="ghcr.io/${REPO_LOWER}:test-${{ github.run_id }}"
+          
+          docker push "$IMAGE_TAG"
           echo "✅ Image pushed successfully"
           echo ""
           echo "To pull this image:"
-          echo "docker pull ghcr.io/${{ github.repository }}:test-${{ github.run_id }}"
+          echo "docker pull $IMAGE_TAG"
 
   test-summary:
     runs-on: ubuntu-latest
@@ -454,7 +465,9 @@ jobs:
               echo "pip install --index-url https://pkg.github.com/${{ github.repository_owner }}/$PACKAGE_NAME/simple sglang"
             elif [ "${{ github.event.inputs.package_type }}" = "docker" ]; then
               echo "Docker image:"
-              echo "docker pull ghcr.io/${{ github.repository }}:test-${{ github.run_id }}"
+              # Docker 镜像名称必须全部小写
+              REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+              echo "docker pull ghcr.io/${REPO_LOWER}:test-${{ github.run_id }}"
             fi
           fi
           

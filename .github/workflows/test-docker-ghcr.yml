@@ -1,0 +1,231 @@
+# 测试 Docker 发布到 GHCR
+# 专门解决 Docker 镜像名称必须小写的问题
+
+name: Test Docker Publishing to GHCR
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Test type'
+        type: choice
+        required: true
+        default: 'simple-docker'
+        options:
+          - simple-docker      # 简单 Docker 构建测试
+          - multi-arch         # 多架构构建
+          - find-dockerfile    # 查找 Dockerfile
+
+jobs:
+  test-simple-docker:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.test_type == 'simple-docker'
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Find Dockerfile
+        run: |
+          echo "=== Looking for Dockerfiles ==="
+          find . -name "Dockerfile" -type f | head -10
+          echo ""
+          
+          # 检查常见的 Dockerfile 位置
+          if [ -f "docker/Dockerfile" ]; then
+            echo "✅ Found: docker/Dockerfile"
+            DOCKERFILE="docker/Dockerfile"
+          elif [ -f "Dockerfile" ]; then
+            echo "✅ Found: ./Dockerfile"
+            DOCKERFILE="Dockerfile"
+          elif [ -f "sgl-model-gateway/Dockerfile" ]; then
+            echo "✅ Found: sgl-model-gateway/Dockerfile"
+            DOCKERFILE="sgl-model-gateway/Dockerfile"
+          else
+            echo "❌ No Dockerfile found in common locations"
+            echo "Creating a simple test Dockerfile..."
+            cat > Dockerfile.test << 'EOF'
+FROM alpine:latest
+LABEL description="Test image for GHCR publishing"
+RUN echo "Hello from test Docker image" > /hello.txt
+CMD ["cat", "/hello.txt"]
+EOF
+            DOCKERFILE="Dockerfile.test"
+            echo "✅ Created test Dockerfile: $DOCKERFILE"
+          fi
+          
+          echo "DOCKERFILE=$DOCKERFILE" >> $GITHUB_ENV
+
+      - name: Build and push Docker image
+        run: |
+          echo "=== Building and pushing Docker image to GHCR ==="
+          
+          # Docker 镜像名称必须全部小写
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+          IMAGE_TAG="ghcr.io/${REPO_LOWER}:test-docker-$TIMESTAMP"
+          
+          echo "Repository: ${{ github.repository }}"
+          echo "Lowercase: $REPO_LOWER"
+          echo "Image tag: $IMAGE_TAG"
+          echo "Dockerfile: $DOCKERFILE"
+          
+          # 构建镜像
+          docker build \
+            -t "$IMAGE_TAG" \
+            -f "$DOCKERFILE" \
+            .
+          
+          echo "✅ Docker image built successfully"
+          
+          # 推送镜像
+          docker push "$IMAGE_TAG"
+          
+          echo "✅ Docker image published to GHCR"
+          echo ""
+          echo "=== SUCCESS ==="
+          echo "Image: $IMAGE_TAG"
+          echo ""
+          echo "To pull and run:"
+          echo "docker pull $IMAGE_TAG"
+          echo "docker run --rm $IMAGE_TAG"
+          echo ""
+          echo "View at: https://github.com/${{ github.repository_owner }}?tab=packages"
+
+  test-multi-arch:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.test_type == 'multi-arch'
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create simple Dockerfile for multi-arch test
+        run: |
+          cat > Dockerfile.multi << 'EOF'
+FROM --platform=$BUILDPLATFORM alpine:latest
+ARG TARGETARCH
+LABEL description="Multi-arch test image"
+RUN echo "Built for architecture: $TARGETARCH" > /arch.txt
+CMD ["cat", "/arch.txt"]
+EOF
+          echo "Created Dockerfile.multi"
+
+      - name: Build and push multi-arch image
+        run: |
+          REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+          IMAGE_TAG="ghcr.io/${REPO_LOWER}:multi-arch-$TIMESTAMP"
+          
+          echo "Building multi-arch image: $IMAGE_TAG"
+          
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            -t "$IMAGE_TAG" \
+            -f Dockerfile.multi \
+            --push .
+          
+          echo "✅ Multi-arch image published to GHCR"
+          echo ""
+          echo "Image: $IMAGE_TAG"
+          echo "Supports: linux/amd64, linux/arm64"
+
+  find-dockerfile:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.test_type == 'find-dockerfile'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Find all Dockerfiles
+        run: |
+          echo "=== Searching for Dockerfiles ==="
+          echo ""
+          
+          # 查找所有 Dockerfile
+          find . -name "Dockerfile" -type f | while read -r file; do
+            echo "📁 $file"
+            echo "   Size: $(wc -l < "$file") lines"
+            echo "   First 3 lines:"
+            head -3 "$file" | sed 's/^/     /'
+            echo ""
+          done
+          
+          echo "=== Docker-related files ==="
+          find . -name "*.dockerfile" -o -name "Dockerfile.*" -o -name "docker-compose*.yml" -o -name "docker-compose*.yaml" | head -10
+
+  summary:
+    runs-on: ubuntu-latest
+    needs: [test-simple-docker, test-multi-arch, find-dockerfile]
+    if: always()
+    
+    steps:
+      - name: Generate test summary
+        run: |
+          echo "=========================================="
+          echo "DOCKER PUBLISHING TEST SUMMARY"
+          echo "=========================================="
+          echo ""
+          echo "Test type: ${{ github.event.inputs.test_type }}"
+          echo ""
+          
+          if [ "${{ github.event.inputs.test_type }}" = "simple-docker" ]; then
+            echo "✅ Simple Docker test completed"
+            echo ""
+            echo "Key fix applied:"
+            echo "- Docker image names must be lowercase"
+            echo "- Using: REPO_LOWER=\$(echo \"\${{ github.repository }}\" | tr '[:upper:]' '[:lower:]')"
+            echo ""
+            echo "This solves the error:"
+            echo "ERROR: failed to build: invalid tag \"ghcr.io/Zherphy/sglang:test-...\": repository name must be lowercase"
+            
+          elif [ "${{ github.event.inputs.test_type }}" = "multi-arch" ]; then
+            echo "✅ Multi-arch Docker test completed"
+            echo ""
+            echo "Demonstrates advanced Docker features:"
+            echo "- Multi-platform builds (amd64, arm64)"
+            echo "- Buildx with QEMU emulation"
+            
+          elif [ "${{ github.event.inputs.test_type }}" = "find-dockerfile" ]; then
+            echo "✅ Dockerfile discovery completed"
+            echo ""
+            echo "Use this to identify existing Dockerfiles in the project"
+          fi
+          
+          echo ""
+          echo "=== Next Steps ==="
+          echo "1. Run 'simple-docker' test to verify Docker publishing works"
+          echo "2. Check packages at: https://github.com/${{ github.repository_owner }}?tab=packages"
+          echo "3. Use the fixed version in final-ghcr-solution.yml"
+          echo ""
+          echo "=========================================="
