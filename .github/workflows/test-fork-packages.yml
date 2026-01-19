@@ -201,14 +201,20 @@ jobs:
           echo "=== Actual Upload to GitHub Packages ==="
           cd python
           
-          # 正确的 GitHub Packages URL 格式 - 末尾有斜杠！
-          # 根据官方文档：https://upload.pkg.github.com/OWNER/
-          UPLOAD_URL="https://upload.pkg.github.com/${{ github.repository_owner }}/"
+          # GitHub Packages Python 包上传 URL
+          # 根据测试，需要验证正确的格式
+          # 可能格式：https://upload.pkg.github.com/OWNER/ 或 https://upload.pkg.github.com/OWNER/REPO
+          # 我们将测试两种格式
+          UPLOAD_URL_WITH_SLASH="https://upload.pkg.github.com/${{ github.repository_owner }}/"
+          UPLOAD_URL_WITH_REPO="https://upload.pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}"
+          UPLOAD_URL_WITH_PACKAGE="https://upload.pkg.github.com/${{ github.repository_owner }}/sglang_zy_test"
           
-          echo "Uploading to (CORRECT FORMAT): $UPLOAD_URL"
+          echo "Testing different GitHub Packages URL formats:"
+          echo "1. With slash: $UPLOAD_URL_WITH_SLASH"
+          echo "2. With repo name: $UPLOAD_URL_WITH_REPO"
+          echo "3. With package name: $UPLOAD_URL_WITH_PACKAGE"
           echo ""
-          echo "Note: Package name 'sglang' comes from pyproject.toml"
-          echo "      The URL ends with a slash!"
+          echo "Note: Package name 'sglang_zy_test' comes from modified pyproject.toml"
           echo ""
           echo "⚠️  IMPORTANT: Adding '_zy_test' suffix to avoid package name conflicts"
           echo "    Original package name: sglang"
@@ -231,28 +237,105 @@ jobs:
           echo "=== Built test packages ==="
           ls -lh dist/
           
-          # 实际上传测试包
+          # 测试不同的 URL 格式
           echo ""
-          echo "=== Uploading test package ==="
-          twine upload \
-            --repository-url "$UPLOAD_URL" \
+          echo "=== Testing different URL formats ==="
+          
+          # 格式 1: 带斜杠
+          echo ""
+          echo "Format 1: With slash (https://upload.pkg.github.com/OWNER/)"
+          if twine upload \
+            --repository-url "$UPLOAD_URL_WITH_SLASH" \
             dist/* \
             --verbose \
             --username "${{ github.actor }}" \
-            --password "$GITHUB_TOKEN"
+            --password "$GITHUB_TOKEN"; then
+            echo "✅ Format 1 SUCCESS"
+            SUCCESS_FORMAT="with slash"
+          else
+            echo "❌ Format 1 FAILED"
+          fi
+          
+          # 格式 2: 带仓库名
+          echo ""
+          echo "Format 2: With repo name (https://upload.pkg.github.com/OWNER/REPO)"
+          if twine upload \
+            --repository-url "$UPLOAD_URL_WITH_REPO" \
+            dist/* \
+            --verbose \
+            --username "${{ github.actor }}" \
+            --password "$GITHUB_TOKEN"; then
+            echo "✅ Format 2 SUCCESS"
+            SUCCESS_FORMAT="with repo name"
+          else
+            echo "❌ Format 2 FAILED"
+          fi
+          
+          # 格式 3: 带包名
+          echo ""
+          echo "Format 3: With package name (https://upload.pkg.github.com/OWNER/PACKAGE)"
+          if twine upload \
+            --repository-url "$UPLOAD_URL_WITH_PACKAGE" \
+            dist/* \
+            --verbose \
+            --username "${{ github.actor }}" \
+            --password "$GITHUB_TOKEN"; then
+            echo "✅ Format 3 SUCCESS"
+            SUCCESS_FORMAT="with package name"
+          else
+            echo "❌ Format 3 FAILED"
+          fi
           
           # 恢复原始 pyproject.toml
           mv pyproject.toml.backup pyproject.toml
           
-          echo "✅ Test upload completed!"
           echo ""
-          echo "To install the test package from your GitHub Packages:"
-          echo "pip install --index-url https://pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/simple sglang_zy_test"
+          echo "=== Test Results Summary ==="
           echo ""
-          echo "Check if package appears at:"
-          echo "https://github.com/${{ github.repository_owner }}?tab=packages"
+          
+          if [ -n "$SUCCESS_FORMAT" ]; then
+            echo "✅✅✅ TEST SUCCESSFUL! ✅✅✅"
+            echo ""
+            echo "Successful URL format: $SUCCESS_FORMAT"
+            echo "Test package name: sglang_zy_test"
+            echo ""
+            echo "This indicates that:"
+            echo "1. GitHub Packages IS working"
+            echo "2. The successful URL format is: $SUCCESS_FORMAT"
+            echo "3. Original 'sglang' might be taken or need different URL"
+            echo ""
+            echo "Test package available at:"
+            echo "https://github.com/${{ github.repository_owner }}?tab=packages"
+            echo ""
+            echo "To install test package:"
+            echo "pip install --index-url https://pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/simple sglang_zy_test"
+            echo ""
+            echo "For original 'sglang' package, try using the successful URL format."
+          else
+            echo "❌❌❌ ALL TESTS FAILED ❌❌❌"
+            echo ""
+            echo "All URL formats failed even with modified package name: sglang_zy_test"
+            echo ""
+            echo "This indicates that:"
+            echo "1. GitHub Packages has general configuration issues"
+            echo "2. The problem is NOT package name conflict"
+            echo "3. The problem is NOT URL format"
+            echo ""
+            echo "Recommended next steps:"
+            echo "1. Run .github/workflows/diagnose-ghpkg.yml for detailed diagnosis"
+            echo "2. Use .github/workflows/ghcr-as-alternative.yml as alternative"
+            echo "3. Check account settings for GitHub Packages"
+            echo "4. Contact GitHub Support"
+          fi
+          
           echo ""
-          echo "If this works, the original 'sglang' package name might be taken by someone else."
+          echo "=== GitHub Documentation Reference ==="
+          echo "Official GitHub documentation for Python packages:"
+          echo "https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-python-registry"
+          echo ""
+          echo "According to documentation, the upload URL should be:"
+          echo "https://upload.pkg.github.com/OWNER/"
+          echo "But actual implementation may vary."
 
       - name: Skip actual upload (insufficient permissions)
         if: github.event.inputs.test_mode == 'actual-upload' && env.CAN_UPLOAD_TO_GHCR != 'true'
