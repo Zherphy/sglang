@@ -394,8 +394,19 @@ jobs:
           IMAGE_TAG="ghcr.io/${REPO_LOWER}:test-${{ github.run_id }}"
           
           if [ -f "docker/Dockerfile" ]; then
-            # 构建镜像
+            # 构建镜像 - 添加必要的构建参数
+            # 根据 Dockerfile 逻辑，需要设置 SGL_VERSION 等参数
+            echo "Building with required build arguments..."
+            echo "SGL_VERSION: 0.3.21 (default)"
+            echo "BUILD_TYPE: all"
+            echo "BRANCH_TYPE: remote"
+            echo "USE_LATEST_SGLANG: 0"
+            
             docker build \
+              --build-arg SGL_VERSION="0.3.21" \
+              --build-arg BUILD_TYPE="all" \
+              --build-arg BRANCH_TYPE="remote" \
+              --build-arg USE_LATEST_SGLANG="0" \
               -t "$IMAGE_TAG" \
               -f docker/Dockerfile \
               .
