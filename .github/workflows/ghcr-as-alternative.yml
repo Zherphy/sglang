@@ -1,0 +1,218 @@
+# 使用 GitHub Container Registry (GHCR) 作为 Python 包存储的替代方案
+# 当 GitHub Packages Python 注册表不工作时使用此方案
+
+name: Publish to GitHub Container Registry (Alternative)
+
+on:
+  workflow_dispatch:
+    inputs:
+      package_type:
+        description: 'Package type to publish'
+        type: choice
+        required: true
+        default: 'python-oci'
+        options:
+          - python-oci      # 将 Python 包作为 OCI 镜像发布到 GHCR
+          - docker-image    # 发布 Docker 镜像
+          - test-only       # 仅测试构建
+
+jobs:
+  publish-python-oci:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.package_type == 'python-oci'
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Build Python package
+        run: |
+          cd python
+          cp ../README.md ../LICENSE .
+          pip install build
+          python -m build
+          echo "=== Built packages ==="
+          ls -lh dist/
+
+      - name: Install crane (OCI tool)
+        run: |
+          echo "Installing crane for OCI operations..."
+          # 下载 crane (OCI 工具)
+          CRANE_VERSION="0.19.1"
+          wget "https://github.com/google/go-containerregistry/releases/download/v${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz"
+          tar -xzf go-containerregistry_Linux_x86_64.tar.gz crane
+          chmod +x crane
+          sudo mv crane /usr/local/bin/
+          crane version
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push Python package as OCI artifact
+        run: |
+          echo "=== Pushing Python package as OCI artifact to GHCR ==="
+          cd python
+          
+          # 将 Python 包推送到 GHCR 作为 OCI 镜像
+          for pkg_file in dist/*.whl dist/*.tar.gz; do
+            if [ -f "$pkg_file" ]; then
+              echo "Pushing: $pkg_file"
+              # 使用 crane 将 Python 包推送到 GHCR
+              crane push "$pkg_file" "ghcr.io/${{ github.repository }}/python/$(basename "$pkg_file"):latest"
+              echo "✅ Pushed: ghcr.io/${{ github.repository }}/python/$(basename "$pkg_file"):latest"
+            fi
+          done
+          
+          echo ""
+          echo "✅ Python packages published as OCI artifacts to GHCR"
+          echo ""
+          echo "To pull and use:"
+          echo "crane pull ghcr.io/${{ github.repository }}/python/sglang-*.whl:latest sglang.whl"
+          echo "pip install sglang.whl"
+
+  publish-docker:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.package_type == 'docker-image'
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v2
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push Docker image
+        run: |
+          echo "=== Building and pushing Docker image to GHCR ==="
+          
+          # 检查 Dockerfile
+          if [ -f "docker/Dockerfile" ]; then
+            DOCKERFILE="docker/Dockerfile"
+          elif [ -f "Dockerfile" ]; then
+            DOCKERFILE="Dockerfile"
+          else
+            echo "❌ No Dockerfile found"
+            exit 1
+          fi
+          
+          IMAGE_TAG="ghcr.io/${{ github.repository }}:test-${{ github.run_id }}"
+          
+          echo "Building from: $DOCKERFILE"
+          echo "Image tag: $IMAGE_TAG"
+          
+          # 构建镜像
+          docker build \
+            -t "$IMAGE_TAG" \
+            -f "$DOCKERFILE" \
+            .
+          
+          # 推送镜像
+          docker push "$IMAGE_TAG"
+          
+          echo "✅ Docker image published to GHCR"
+          echo ""
+          echo "To pull:"
+          echo "docker pull $IMAGE_TAG"
+
+  test-build-only:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.package_type == 'test-only'
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Build Python package (test only)
+        run: |
+          cd python
+          cp ../README.md ../LICENSE .
+          pip install build
+          python -m build
+          echo "=== Built packages ==="
+          ls -lh dist/
+          echo ""
+          echo "Package would be published to:"
+          echo "GHCR: ghcr.io/${{ github.repository }}/python/sglang-*.whl:latest"
+          echo ""
+          echo "To actually publish, run with package_type: 'python-oci' or 'docker-image'"
+
+  summary:
+    runs-on: ubuntu-latest
+    needs: [publish-python-oci, publish-docker, test-build-only]
+    if: always()
+    
+    steps:
+      - name: Generate summary
+        run: |
+          echo "=========================================="
+          echo "GitHub Container Registry (GHCR) Publishing Summary"
+          echo "=========================================="
+          echo ""
+          echo "Package type: ${{ github.event.inputs.package_type }}"
+          echo "Repository: ${{ github.repository }}"
+          echo ""
+          
+          if [ "${{ github.event.inputs.package_type }}" = "python-oci" ]; then
+            echo "✅ Python packages published as OCI artifacts to GHCR"
+            echo ""
+            echo "Published artifacts:"
+            echo "  - ghcr.io/${{ github.repository }}/python/sglang-*.whl:latest"
+            echo "  - ghcr.io/${{ github.repository }}/python/sglang-*.tar.gz:latest"
+            echo ""
+            echo "Usage:"
+            echo "1. Install crane: https://github.com/google/go-containerregistry"
+            echo "2. Pull package: crane pull ghcr.io/${{ github.repository }}/python/sglang-*.whl:latest sglang.whl"
+            echo "3. Install: pip install sglang.whl"
+            
+          elif [ "${{ github.event.inputs.package_type }}" = "docker-image" ]; then
+            echo "✅ Docker image published to GHCR"
+            echo ""
+            echo "Image: ghcr.io/${{ github.repository }}:test-${{ github.run_id }}"
+            echo ""
+            echo "Usage:"
+            echo "docker pull ghcr.io/${{ github.repository }}:test-${{ github.run_id }}"
+            
+          elif [ "${{ github.event.inputs.package_type }}" = "test-only" ]; then
+            echo "✅ Build test completed"
+            echo ""
+            echo "Next: Run with package_type: 'python-oci' or 'docker-image' to publish"
+          fi
+          
+          echo ""
+          echo "=== Why use GHCR instead of GitHub Packages Python registry? ==="
+          echo "1. GHCR is more reliable for some users"
+          echo "2. OCI artifacts can store any type of package"
+          echo "3. Better integration with Docker ecosystem"
+          echo "4. Avoids GitHub Packages Python registry issues"
+          echo ""
+          echo "View your packages at:"
+          echo "https://github.com/${{ github.repository_owner }}?tab=packages"
+          echo ""
+          echo "=========================================="

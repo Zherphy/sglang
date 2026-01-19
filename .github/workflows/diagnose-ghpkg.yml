@@ -1,0 +1,123 @@
+# 诊断 GitHub Packages 问题的工作流
+# 运行 check_ghpkg_api.py 脚本来诊断问题
+
+name: Diagnose GitHub Packages Issues
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: read
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Install dependencies
+        run: |
+          pip install requests
+
+      - name: Run diagnosis script
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "=== Running GitHub Packages Diagnosis ==="
+          echo ""
+          python check_ghpkg_api.py
+
+      - name: Additional diagnosis
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo ""
+          echo "=== Additional Diagnosis ==="
+          echo ""
+          
+          # 检查 GitHub Packages 设置
+          echo "1. Checking GitHub Packages API endpoints..."
+          
+          # 测试不同的端点
+          ENDPOINTS=(
+            "https://api.github.com/user"
+            "https://api.github.com/user/packages"
+            "https://api.github.com/user/packages?package_type=pypi"
+            "https://api.github.com/user/packages/pypi/sglang"
+          )
+          
+          for endpoint in "${ENDPOINTS[@]}"; do
+            echo ""
+            echo "Testing: $endpoint"
+            status_code=$(curl -s -o /dev/null -w "%{http_code}" \
+              -H "Authorization: token $GITHUB_TOKEN" \
+              -H "Accept: application/vnd.github.v3+json" \
+              "$endpoint")
+            echo "Status: $status_code"
+            
+            if [ "$status_code" = "200" ]; then
+              echo "✅ Accessible"
+            elif [ "$status_code" = "404" ]; then
+              echo "❌ Not Found"
+            elif [ "$status_code" = "403" ]; then
+              echo "⚠️  Forbidden (check permissions)"
+            else
+              echo "⚠️  Unexpected: $status_code"
+            fi
+          done
+          
+          echo ""
+          echo "2. Testing upload endpoints..."
+          
+          UPLOAD_ENDPOINTS=(
+            "https://upload.pkg.github.com/"
+            "https://upload.pkg.github.com/${{ github.repository_owner }}/"
+            "https://upload.pkg.github.com/${{ github.repository_owner }}/sglang"
+            "https://upload.pkg.github.com/${{ github.repository_owner }}/_"
+          )
+          
+          for endpoint in "${UPLOAD_ENDPOINTS[@]}"; do
+            echo ""
+            echo "Testing: $endpoint"
+            status_code=$(curl -s -o /dev/null -w "%{http_code}" -I \
+              -H "Authorization: token $GITHUB_TOKEN" \
+              "$endpoint")
+            echo "HEAD Status: $status_code"
+          done
+
+      - name: Generate diagnosis report
+        run: |
+          echo ""
+          echo "=========================================="
+          echo "GitHub Packages Diagnosis Report"
+          echo "=========================================="
+          echo ""
+          echo "Based on the diagnosis results:"
+          echo ""
+          echo "If all endpoints return 404:"
+          echo "  - GitHub Packages may not be enabled for your account"
+          echo "  - Check https://github.com/settings/packages"
+          echo ""
+          echo "If API endpoints work but upload endpoints don't:"
+          echo "  - GitHub Packages Python registry may have issues"
+          echo "  - Consider using GHCR as alternative"
+          echo ""
+          echo "If permissions are 403:"
+          echo "  - GITHUB_TOKEN needs 'packages: write' permission"
+          echo "  - Check repository Settings → Actions → General"
+          echo ""
+          echo "Recommended next steps:"
+          echo "1. Check account settings for GitHub Packages"
+          echo "2. Try creating package manually via Web UI"
+          echo "3. Use GHCR alternative workflow"
+          echo "4. Contact GitHub Support if needed"
+          echo ""
+          echo "Alternative workflow: .github/workflows/ghcr-as-alternative.yml"
+          echo "=========================================="
