@@ -99,7 +99,7 @@ jobs:
           
           # 方法1：使用 repository-url 参数（推荐）
           python3 -m twine upload \
-            --repository-url https://ghcr.io/${{ github.repository }}/python \
+            --repository-url https://upload.pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }} \
             dist/* \
             --verbose \
             --username ${{ github.actor }} \
@@ -123,7 +123,7 @@ jobs:
           echo "twine upload dist/* -u __token__ -p \$PYPI_TOKEN"
           echo ""
           echo "GitHub Packages upload command would be:"
-          echo "twine upload --repository-url https://ghcr.io/${{ github.repository }}/python dist/* --username ${{ github.actor }} --password \$GITHUB_TOKEN"
+          echo "twine upload --repository-url https://upload.pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }} dist/* --username ${{ github.actor }} --password \$GITHUB_TOKEN"
           echo ""
           echo "Packages built:"
           cd python && ls -la dist/
@@ -173,16 +173,17 @@ jobs:
 
 # 测试安装：
 # 从 GitHub Packages 安装：
-# pip install --index-url https://ghcr.io/sgl-project/sglang/python sglang
-# 
+# pip install --index-url https://pkg.github.com/sgl-project/sglang/simple sglang
+#
 # 或配置 pip 使用多个索引：
 # cat > ~/.pip/pip.conf << EOF
 # [global]
-# extra-index-url = https://ghcr.io/sgl-project/sglang/python
+# extra-index-url = https://pkg.github.com/sgl-project/sglang/simple
 # EOF
 
 # 注意事项：
-# 1. GitHub Packages 的 Python 仓库使用 ghcr.io 域名
-# 2. 包名称会自动从 pyproject.toml 或 setup.py 中读取
-# 3. 版本号从 git 标签自动提取
-# 4. 如果发布失败，检查权限和网络连接
+# 1. GitHub Packages 的 Python 仓库使用 upload.pkg.github.com 上传
+# 2. 安装时使用 pkg.github.com/OWNER/REPO/simple
+# 3. 包名称会自动从 pyproject.toml 或 setup.py 中读取
+# 4. 版本号从 git 标签自动提取
+# 5. 如果发布失败，检查权限和网络连接

@@ -180,10 +180,10 @@ jobs:
           cd python
           
           echo "GitHub Packages repository URL:"
-          echo "https://ghcr.io/${{ github.repository }}/python"
+          echo "https://upload.pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}"
           echo ""
           echo "Upload command would be:"
-          echo "twine upload --repository-url https://ghcr.io/${{ github.repository }}/python dist/* --username ${{ github.actor }} --password \$GITHUB_TOKEN"
+          echo "twine upload --repository-url https://upload.pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }} dist/* --username ${{ github.actor }} --password \$GITHUB_TOKEN"
           echo ""
           echo "To actually upload, run with test_mode: 'actual-upload'"
 
@@ -195,11 +195,11 @@ jobs:
           echo "=== Actual Upload to GitHub Packages ==="
           cd python
           
-          echo "Uploading to: https://ghcr.io/${{ github.repository }}/python"
+          echo "Uploading to: https://upload.pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}"
           
           # 实际上传
           twine upload \
-            --repository-url https://ghcr.io/${{ github.repository }}/python \
+            --repository-url https://upload.pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }} \
             dist/* \
             --verbose \
             --username ${{ github.actor }} \
@@ -208,7 +208,7 @@ jobs:
           echo "✅ Upload completed!"
           echo ""
           echo "To install from your GitHub Packages:"
-          echo "pip install --index-url https://ghcr.io/${{ github.repository }}/python sglang"
+          echo "pip install --index-url https://pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/simple sglang"
 
       - name: Skip actual upload (insufficient permissions)
         if: github.event.inputs.test_mode == 'actual-upload' && env.CAN_UPLOAD_TO_GHCR != 'true'
@@ -223,7 +223,7 @@ jobs:
           echo ""
           echo "For now, running in dry-run mode instead..."
           echo "To test installation from GitHub Packages, you can use:"
-          echo "pip install --index-url https://ghcr.io/${{ github.repository }}/python sglang"
+          echo "pip install --index-url https://pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/simple sglang"
 
   test-docker-package:
     runs-on: ubuntu-latest
@@ -322,7 +322,7 @@ jobs:
             echo "To use the published packages:"
             if [ "${{ github.event.inputs.package_type }}" = "python" ]; then
               echo "Python package:"
-              echo "pip install --index-url https://ghcr.io/${{ github.repository }}/python sglang"
+              echo "pip install --index-url https://pkg.github.com/${{ github.repository_owner }}/${{ github.event.repository.name }}/simple sglang"
             elif [ "${{ github.event.inputs.package_type }}" = "docker" ]; then
               echo "Docker image:"
               echo "docker pull ghcr.io/${{ github.repository }}:test-${{ github.run_id }}"
