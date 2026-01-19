@@ -385,35 +385,54 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build Docker image
+      - name: Clean disk space before build
         run: |
-          echo "Building Docker image..."
+          echo "=== Cleaning disk space ==="
+          echo "Current disk usage:"
+          df -h
+          echo ""
+          echo "Cleaning Docker cache and temporary files..."
+          docker system prune -f || true
+          echo "✅ Disk cleanup completed"
+
+      - name: Build Docker image (minimal)
+        run: |
+          echo "Building minimal Docker image to avoid disk space issues..."
           
           # Docker 镜像名称必须全部小写
           REPO_LOWER=$(echo "${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
-          IMAGE_TAG="ghcr.io/${REPO_LOWER}:test-${{ github.run_id }}"
+          IMAGE_TAG="ghcr.io/${REPO_LOWER}:test-minimal-${{ github.run_id }}"
           
           if [ -f "docker/Dockerfile" ]; then
-            # 构建镜像 - 添加必要的构建参数
-            # 根据错误信息，v0.3.21 标签不存在，所以使用 USE_LATEST_SGLANG=1
-            echo "Building with required build arguments..."
-            echo "Note: Using USE_LATEST_SGLANG=1 to clone latest version"
-            echo "BUILD_TYPE: all"
+            # 构建镜像 - 使用最小化构建参数
+            echo "Building with minimal build arguments to reduce disk usage..."
+            echo "BUILD_TYPE: cpu (最小化构建)"
             echo "BRANCH_TYPE: remote"
             echo "USE_LATEST_SGLANG: 1"
+            echo "INSTALL_FLASHINFER_JIT_CACHE: 0 (禁用)"
+            
+            # 先检查磁盘空间
+            echo "=== Disk space before build ==="
+            df -h
             
             docker build \
-              --build-arg BUILD_TYPE="all" \
+              --build-arg BUILD_TYPE="cpu" \
               --build-arg BRANCH_TYPE="remote" \
               --build-arg USE_LATEST_SGLANG="1" \
+              --build-arg INSTALL_FLASHINFER_JIT_CACHE="0" \
+              --build-arg BUILD_AND_DOWNLOAD_PARALLEL="1" \
               -t "$IMAGE_TAG" \
               -f docker/Dockerfile \
+              --progress=plain \
               .
             
             echo "✅ Docker image built successfully"
             echo "Image: $IMAGE_TAG"
             echo "Original repo: ${{ github.repository }}"
             echo "Lowercase repo: $REPO_LOWER"
+            
+            echo "=== Disk space after build ==="
+            df -h
           else
             echo "❌ Dockerfile not found at docker/Dockerfile"
             echo "Available Dockerfiles:"
